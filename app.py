@@ -17,9 +17,9 @@ st.set_page_config(
 st.title("影片字幕提取工具")
 st.markdown("上傳影片或音訊檔案，自動提取字幕並轉換成多種格式。")
 
-# 初始化 session state
-if 'processed_files' not in st.session_state:
-    st.session_state.processed_files = {}
+@st.cache_resource
+def load_whisper_model(model_name):
+    return whisper.load_model(model_name)
 
 def format_timestamp(seconds):
     """格式化時間戳"""
@@ -51,23 +51,29 @@ def write_vtt(segments, output_path):
             f.write(f"{segment['text'].strip()}\n\n")
 
 # 檔案上傳
-uploaded_file = st.file_uploader("選擇影音檔案", type=['mp4', 'mkv', 'avi', 'mov', 'mp3', 'wav'])
+uploaded_file = st.file_uploader(
+    "選擇影音檔案",
+    type=['mp4', 'mkv', 'avi', 'mov', 'mp3', 'wav'],
+    help="支援的格式：MP4, MKV, AVI, MOV, MP3, WAV"
+)
 
 # 選擇輸出格式
 output_formats = st.multiselect(
     "選擇輸出格式",
     ['txt', 'srt', 'vtt', 'tsv', 'json'],
-    default=['txt', 'srt']
+    default=['txt', 'srt'],
+    help="可以選擇多種輸出格式"
 )
 
 # 選擇模型大小
 model_size = st.selectbox(
-    "選擇模型大小（越大越準確但處理較慢）",
-    ["tiny", "base", "small", "medium", "large"],
-    index=1
+    "選擇模型大小",
+    ["tiny", "base", "small"],
+    index=1,
+    help="tiny：最快但較不準確\nbase：平衡速度和準確度\nsmall：較慢但更準確"
 )
 
-if uploaded_file and output_formats and st.button("開始提取字幕"):
+if uploaded_file and output_formats and st.button("開始提取字幕", help="點擊開始處理"):
     try:
         # 建立臨時目錄
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -80,38 +86,40 @@ if uploaded_file and output_formats and st.button("開始提取字幕"):
             audio_path = os.path.join(temp_dir, "audio.wav")
             progress_text = "正在轉換音訊..."
             progress_bar = st.progress(0)
-            st.text(progress_text)
+            status_text = st.empty()
+            status_text.text(progress_text)
             
-            subprocess.run([
-                'ffmpeg',
-                '-i', input_path,
-                '-vn',
-                '-acodec', 'pcm_s16le',
-                '-ar', '16000',
-                '-ac', '1',
-                '-y',
-                audio_path
-            ], check=True)
+            try:
+                subprocess.run([
+                    'ffmpeg',
+                    '-i', input_path,
+                    '-vn',
+                    '-acodec', 'pcm_s16le',
+                    '-ar', '16000',
+                    '-ac', '1',
+                    '-y',
+                    audio_path
+                ], check=True, capture_output=True)
+            except subprocess.CalledProcessError as e:
+                st.error(f"音訊轉換失敗：{e.stderr.decode()}")
+                st.stop()
             
             progress_bar.progress(25)
             
             # 載入模型
-            progress_text = f"正在載入 Whisper {model_size} 模型..."
-            st.text(progress_text)
-            model = whisper.load_model(model_size)
+            status_text.text(f"正在載入 Whisper {model_size} 模型...")
+            model = load_whisper_model(model_size)
             
             progress_bar.progress(50)
             
             # 辨識文字
-            progress_text = "正在辨識文字..."
-            st.text(progress_text)
+            status_text.text("正在辨識文字...")
             result = model.transcribe(audio_path)
             
             progress_bar.progress(75)
             
             # 產生各種格式的輸出
-            progress_text = "正在產生輸出檔案..."
-            st.text(progress_text)
+            status_text.text("正在產生輸出檔案...")
             
             output_files = {}
             base_name = os.path.splitext(uploaded_file.name)[0]
@@ -145,17 +153,21 @@ if uploaded_file and output_formats and st.button("開始提取字幕"):
                     output_files[fmt] = f.read()
             
             progress_bar.progress(100)
-            st.success("處理完成！")
+            status_text.text("處理完成！")
             
             # 顯示下載按鈕
-            st.markdown("### 下載字幕檔")
-            for fmt, content in output_files.items():
-                st.download_button(
-                    label=f"下載 {fmt.upper()} 格式",
-                    data=content,
-                    file_name=f"{base_name}.{fmt}",
-                    mime='text/plain'
-                )
+            st.success("字幕提取完成！請下載您需要的格式。")
+            
+            col1, col2 = st.columns(2)
+            for i, (fmt, content) in enumerate(output_files.items()):
+                with col1 if i % 2 == 0 else col2:
+                    st.download_button(
+                        label=f"下載 {fmt.upper()} 格式",
+                        data=content,
+                        file_name=f"{base_name}.{fmt}",
+                        mime='text/plain',
+                        help=f"下載 {fmt.upper()} 格式的字幕檔"
+                    )
             
             # 預覽第一個格式的內容
             if output_files:
@@ -166,3 +178,4 @@ if uploaded_file and output_formats and st.button("開始提取字幕"):
     
     except Exception as e:
         st.error(f"處理過程中發生錯誤：{str(e)}")
+        st.exception(e)
