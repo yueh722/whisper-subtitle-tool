@@ -17,8 +17,8 @@ st.set_page_config(
 st.title("影片字幕提取工具")
 st.markdown("上傳影片或音訊檔案，自動提取字幕並轉換成多種格式。")
 
-# 使用舊版的快取裝飾器
-@st.experimental_singleton
+# 使用通用的快取裝飾器
+@st.cache(allow_output_mutation=True, suppress_st_warning=True)
 def load_whisper_model(model_name):
     return whisper.load_model(model_name)
 
