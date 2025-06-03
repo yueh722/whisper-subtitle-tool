@@ -1,3 +1,10 @@
-streamlit
-openai-whisper
-ffmpeg-python 
+streamlit>=1.24.0
+git+https://github.com/openai/whisper.git
+ffmpeg-python>=0.2.0
+torch
+numpy
+tqdm
+more-itertools
+transformers>=4.19.0
+ffmpeg-python
+setuptools-rust 
