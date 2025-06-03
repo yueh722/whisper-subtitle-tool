@@ -7,6 +7,8 @@ import uuid
 import json
 import logging
 import tempfile
+import zipfile
+import io
 
 # 設定日誌
 logging.basicConfig(level=logging.DEBUG,
@@ -24,83 +26,100 @@ st.set_page_config(
 st.markdown("""
 <style>
     .stApp {
-        background-color: #1a1a2e;
+        background-color: #f5f5f5;
     }
     
     .main {
-        background-color: #242444;
+        background-color: white;
         padding: 2rem;
-        border-radius: 15px;
-        box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
-        border: 1px solid #3498db;
+        border-radius: 10px;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
     }
     
     h1 {
-        color: white;
+        color: #333;
         text-align: center;
-        margin-bottom: 2rem;
+        margin-bottom: 30px;
         font-size: 2.2em;
-        text-transform: uppercase;
-        letter-spacing: 2px;
-        position: relative;
         padding-bottom: 15px;
-    }
-    
-    h1:after {
-        content: '';
-        position: absolute;
-        bottom: 0;
-        left: 50%;
-        transform: translateX(-50%);
-        width: 60px;
-        height: 4px;
-        background: #2196F3;
-        border-radius: 2px;
+        border-bottom: 4px solid #2196F3;
     }
     
     .stButton > button {
         width: 100%;
-        background-color: rgba(33, 150, 243, 0.8);
-        color: white;
+        background-color: #cccccc;
+        color: #666666;
         padding: 0.8rem;
         font-size: 1.1em;
         border: none;
-        border-radius: 5px;
-        cursor: pointer;
+        border-radius: 4px;
+        cursor: not-allowed;
         transition: all 0.3s ease;
     }
     
-    .stButton > button:hover {
-        background-color: #1976D2;
-        transform: translateY(-2px);
+    .stButton > button.active {
+        background-color: #2196F3;
+        color: white;
+        cursor: pointer;
     }
     
-    .stButton > button:disabled {
-        background-color: rgba(36, 36, 68, 0.6);
-        cursor: not-allowed;
+    .stButton > button.active:hover {
+        background-color: #1976D2;
     }
     
     div[data-testid="stFileUploader"] {
-        background-color: rgba(36, 36, 68, 0.6);
-        border: 1px solid #3498db;
-        border-radius: 5px;
+        background-color: white;
+        border: 1px solid #ddd;
+        border-radius: 4px;
         padding: 1rem;
     }
     
     .stCheckbox {
-        background-color: rgba(36, 36, 68, 0.6);
-        padding: 1rem;
-        border-radius: 5px;
-        border: 1px solid #3498db;
+        background-color: white;
+        padding: 0.5rem;
         margin: 0.5rem 0;
     }
     
-    .stCheckbox label {
-        color: white !important;
+    div[data-testid="stMarkdownContainer"] {
+        color: #333;
     }
     
-    div[data-testid="stMarkdownContainer"] {
-        color: white;
+    .status-info {
+        padding: 1rem;
+        border-radius: 4px;
+        background-color: #e3f2fd;
+        color: #0d47a1;
+        margin: 1rem 0;
+    }
+    
+    .status-error {
+        padding: 1rem;
+        border-radius: 4px;
+        background-color: #ffebee;
+        color: #c62828;
+        margin: 1rem 0;
+    }
+    
+    .status-success {
+        padding: 1rem;
+        border-radius: 4px;
+        background-color: #e8f5e9;
+        color: #2e7d32;
+        margin: 1rem 0;
+    }
+    
+    .checkbox-group {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin: 20px 0;
+        justify-content: center;
+    }
+    
+    .format-option {
+        flex: 1;
+        min-width: 150px;
+        max-width: 200px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -237,8 +256,24 @@ def process_audio(audio_file, formats):
         logger.error(f"處理失敗：{str(e)}")
         raise
 
+def create_zip_file(outputs, filename_prefix):
+    """將所有輸出打包成ZIP檔案"""
+    memory_file = io.BytesIO()
+    with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for fmt, content in outputs.items():
+            output_filename = f"{filename_prefix}.{fmt}"
+            zf.writestr(output_filename, content)
+    memory_file.seek(0)
+    return memory_file
+
 def main():
     st.title("智能字幕提取系統")
+    
+    # 初始化 session state
+    if 'processed' not in st.session_state:
+        st.session_state.processed = False
+        st.session_state.outputs = None
+        st.session_state.filename = None
     
     # 檔案上傳
     uploaded_file = st.file_uploader(
@@ -249,8 +284,8 @@ def main():
     
     # 格式選擇
     st.write("選擇輸出格式：")
-    col1, col2, col3, col4, col5 = st.columns(5)
     
+    col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
         txt_format = st.checkbox('純文字 (.txt)', value=True)
     with col2:
@@ -275,37 +310,42 @@ def main():
         formats.append('json')
     
     # 處理按鈕
-    if uploaded_file is not None and formats and st.button('開始提取', key='process_btn'):
+    process_btn = st.empty()
+    download_btn = st.empty()
+    
+    # 根據狀態設定按鈕樣式
+    process_btn_disabled = not (uploaded_file and formats)
+    process_btn_class = "" if process_btn_disabled else "active"
+    
+    if process_btn.button('開始提取', disabled=process_btn_disabled, key='process_btn'):
         try:
             with st.spinner('正在處理中...'):
                 # 處理檔案
                 outputs = process_audio(uploaded_file, formats)
+                st.session_state.outputs = outputs
+                st.session_state.filename = os.path.splitext(uploaded_file.name)[0]
+                st.session_state.processed = True
             
             # 顯示成功訊息
             st.success('處理完成！請點擊下方按鈕下載字幕檔')
             
-            # 為每個格式創建下載按鈕
-            cols = st.columns(len(outputs))
-            for i, (fmt, content) in enumerate(outputs.items()):
-                with cols[i]:
-                    filename = f"{os.path.splitext(uploaded_file.name)[0]}.{fmt}"
-                    mime_type = 'text/plain'
-                    if fmt == 'json':
-                        mime_type = 'application/json'
-                    elif fmt == 'tsv':
-                        mime_type = 'text/tab-separated-values'
-                    
-                    st.download_button(
-                        label=f'下載 {fmt.upper()} 檔案',
-                        data=content.encode('utf-8'),
-                        file_name=filename,
-                        mime=mime_type,
-                        key=f'download_{fmt}'
-                    )
-                
         except Exception as e:
             st.error(f'處理失敗：{str(e)}')
             logger.error(f"處理失敗：{str(e)}")
+            st.session_state.processed = False
+    
+    # 下載按鈕
+    if st.session_state.processed and st.session_state.outputs:
+        zip_file = create_zip_file(st.session_state.outputs, st.session_state.filename)
+        download_btn.download_button(
+            label='下載字幕檔',
+            data=zip_file,
+            file_name=f"{st.session_state.filename}_subtitles.zip",
+            mime='application/zip',
+            key='download_btn'
+        )
+    else:
+        download_btn.button('下載字幕檔', disabled=True, key='download_btn')
     
     # 顯示說明
     if uploaded_file is None:
