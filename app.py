@@ -76,28 +76,33 @@ st.markdown("""
         border-radius: 5px !important;
         padding: 0 !important;
         margin-bottom: 20px !important;
+        width: 100% !important;
+        max-width: 800px !important;
     }
 
     section[data-testid="stFileUploader"] [data-testid="stFileUploadDropzone"] {
         background-color: transparent !important;
         border: none !important;
         padding: 20px !important;
+        width: 100% !important;
     }
 
     /* 修改上傳按鈕文字 */
     button[data-testid="baseButton-secondary"] {
-        display: none !important;
+        background-color: var(--primary-color) !important;
+        border-color: var(--primary-color) !important;
+        color: white !important;
+        width: 100% !important;
+        height: 42px !important;
+        border-radius: 5px !important;
+        font-size: 1em !important;
+        cursor: pointer !important;
+        margin: 10px 0 !important;
     }
 
-    button[data-testid="baseButton-secondary"] + div::before {
-        content: '選擇檔案' !important;
-        display: inline-block !important;
-        background-color: transparent !important;
-        border: 1px solid var(--border-color) !important;
-        color: white !important;
-        padding: 8px 16px !important;
-        border-radius: 4px !important;
-        cursor: pointer !important;
+    button[data-testid="baseButton-secondary"]:hover {
+        background-color: var(--primary-dark) !important;
+        border-color: var(--primary-dark) !important;
     }
 
     /* 上傳區域文字樣式 */
@@ -234,22 +239,13 @@ st.markdown("""
         color: white !important;
     }
 
-    /* 提示訊息和按鈕容器樣式 */
-    div.stAlert {
-        background-color: rgba(36, 36, 68, 0.4) !important;
-        border: 1px solid var(--border-color) !important;
-        border-radius: 5px !important;
-        padding: 16px !important;
-        margin: 20px 0 !important;
-        text-align: left !important;
-        min-height: 60px !important;
-    }
-
     /* 按鈕容器 */
     div.element-container:has(> div.stButton), 
     div.element-container:has(> div.stDownloadButton) {
         margin: 0 !important;
         padding: 0 !important;
+        width: 100% !important;
+        max-width: 800px !important;
     }
 
     div.row-widget.stButton,
@@ -258,11 +254,42 @@ st.markdown("""
         padding: 0 !important;
     }
 
-    .stButton > button,
-    .stDownloadButton > button {
+    /* 按鈕樣式 */
+    .stButton > button {
         width: 100% !important;
         height: 42px !important;
         margin: 0 !important;
+        background-color: rgba(36, 36, 68, 0.6) !important;
+        color: rgba(255, 255, 255, 0.3) !important;
+        border: 1px solid var(--border-color) !important;
+        border-radius: 5px !important;
+        cursor: not-allowed !important;
+        transition: all 0.3s ease !important;
+    }
+
+    .stButton > button:disabled {
+        background-color: rgba(36, 36, 68, 0.6) !important;
+        color: rgba(255, 255, 255, 0.3) !important;
+        border-color: rgba(52, 152, 219, 0.3) !important;
+        cursor: not-allowed !important;
+    }
+
+    .stButton > button:not(:disabled) {
+        background-color: var(--primary-color) !important;
+        color: white !important;
+        border-color: var(--primary-color) !important;
+        cursor: pointer !important;
+    }
+
+    .stButton > button:not(:disabled):hover {
+        background-color: var(--primary-dark) !important;
+        border-color: var(--primary-dark) !important;
+        transform: translateY(-2px) !important;
+    }
+
+    /* 下載按鈕容器 */
+    div[data-testid="stDownloadButton"] {
+        display: none !important;
     }
 
     /* 按鈕行容器 */
@@ -271,11 +298,81 @@ st.markdown("""
         gap: 20px !important;
         margin: 20px 0 !important;
         align-items: stretch !important;
+        width: 100% !important;
+        max-width: 800px !important;
     }
 
     div.css-1kyxreq > div {
         flex: 1 !important;
         margin: 0 !important;
+    }
+
+    /* 提示訊息容器 */
+    div.stAlert {
+        background-color: rgba(36, 36, 68, 0.4) !important;
+        border: 1px solid var(--border-color) !important;
+        border-radius: 5px !important;
+        padding: 16px !important;
+        margin: 20px 0 !important;
+        text-align: center !important;
+        min-height: 60px !important;
+        width: 100% !important;
+        max-width: 800px !important;
+    }
+
+    /* 訊息區域樣式 */
+    #status-area {
+        margin: 20px 0 !important;
+        padding: 20px !important;
+        border-radius: 10px !important;
+        background-color: rgba(36, 36, 68, 0.4) !important;
+        min-height: 60px !important;
+        width: 100% !important;
+        max-width: 800px !important;
+        border: 1px solid var(--border-color) !important;
+        box-sizing: border-box !important;
+    }
+
+    .status-message {
+        margin: 0 !important;
+        padding: 15px !important;
+        border-radius: 5px !important;
+        text-align: center !important;
+        color: white !important;
+        font-size: 1.1em !important;
+        width: 100% !important;
+        box-sizing: border-box !important;
+    }
+
+    .status-info {
+        background-color: rgba(52, 152, 219, 0.2) !important;
+    }
+
+    .status-error {
+        background-color: rgba(231, 76, 60, 0.2) !important;
+        color: #ff6b6b !important;
+    }
+
+    .status-success {
+        background-color: rgba(46, 204, 113, 0.2) !important;
+        color: #2ecc71 !important;
+    }
+
+    .status-warning {
+        background-color: rgba(241, 196, 15, 0.2) !important;
+        color: #f1c40f !important;
+    }
+
+    /* 隱藏 Streamlit 的 spinner */
+    .stSpinner {
+        display: none !important;
+    }
+
+    /* 確保所有容器寬度一致 */
+    .main .block-container {
+        max-width: 800px !important;
+        padding: 0 !important;
+        margin: 0 auto !important;
     }
 
     /* 隱藏 Streamlit 預設的漢堡選單和頁尾 */
@@ -448,13 +545,18 @@ def main():
         st.session_state.processed = False
         st.session_state.outputs = None
         st.session_state.filename = None
+        st.session_state.status_message = "請選擇要處理的影音檔案"
+        st.session_state.status_type = "info"
+        st.session_state.processing = False
+        st.session_state.downloaded = False
     
     # 檔案上傳
     st.markdown('<div class="section-title">選擇影音檔：</div>', unsafe_allow_html=True)
     uploaded_file = st.file_uploader(
         "",
         type=['mp3', 'wav', 'mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm'],
-        help="支援多種影音格式，包括 MP3、WAV、MP4、MKV 等"
+        help="支援多種影音格式，包括 MP3、WAV、MP4、MKV 等",
+        on_change=lambda: setattr(st.session_state, 'downloaded', False)
     )
     
     # 格式選擇
@@ -466,11 +568,11 @@ def main():
     with col2:
         srt_format = st.checkbox('字幕檔\n(.srt)', value=True)
     with col3:
-        vtt_format = st.checkbox('網頁字幕\n(.vtt)')
+        vtt_format = st.checkbox('網頁字幕\n(.vtt)', value=True)
     with col4:
-        tsv_format = st.checkbox('Excel格式\n(.tsv)')
+        tsv_format = st.checkbox('Excel格式\n(.tsv)', value=True)
     with col5:
-        json_format = st.checkbox('JSON格式\n(.json)')
+        json_format = st.checkbox('JSON格式\n(.json)', value=True)
     
     formats = []
     if txt_format:
@@ -489,40 +591,60 @@ def main():
     col1, col2 = st.columns(2)
     
     with col1:
-        process_btn_disabled = not (uploaded_file and formats)
+        process_btn_disabled = not (uploaded_file and formats) or st.session_state.processing
+        process_btn_class = "" if process_btn_disabled else "active"
         if st.button('開始提取', disabled=process_btn_disabled, key='process_btn'):
             try:
-                with st.spinner('正在處理中...'):
-                    outputs = process_audio(uploaded_file, formats)
-                    st.session_state.outputs = outputs
-                    st.session_state.filename = os.path.splitext(uploaded_file.name)[0]
-                    st.session_state.processed = True
-                st.success('處理完成！請點擊右側按鈕下載字幕檔')
+                st.session_state.processing = True
+                st.session_state.downloaded = False
+                st.session_state.status_message = "正在提取字幕..."
+                st.session_state.status_type = "info"
+                outputs = process_audio(uploaded_file, formats)
+                st.session_state.outputs = outputs
+                st.session_state.filename = os.path.splitext(uploaded_file.name)[0]
+                st.session_state.processed = True
+                st.session_state.processing = False
+                st.session_state.status_message = "處理完成！請點擊右側按鈕下載字幕檔"
+                st.session_state.status_type = "success"
             except Exception as e:
-                st.error(f'處理失敗：{str(e)}')
+                st.session_state.processing = False
+                st.session_state.status_message = f"處理失敗：{str(e)}"
+                st.session_state.status_type = "error"
                 logger.error(f"處理失敗：{str(e)}")
                 st.session_state.processed = False
     
     with col2:
-        if st.session_state.processed and st.session_state.outputs:
-            zip_file = create_zip_file(st.session_state.outputs, st.session_state.filename)
-            st.download_button(
-                label='下載字幕檔',
-                data=zip_file,
-                file_name=f"{st.session_state.filename}_subtitles.zip",
-                mime='application/zip',
-                key='download_btn'
-            )
-        else:
-            st.button('下載字幕檔', disabled=True, key='download_btn')
+        download_btn_disabled = not st.session_state.processed or st.session_state.downloaded
+        download_btn_class = "" if download_btn_disabled else "active"
+        if st.button('下載字幕檔', disabled=download_btn_disabled, key='download_btn'):
+            if st.session_state.outputs:
+                zip_file = create_zip_file(st.session_state.outputs, st.session_state.filename)
+                st.download_button(
+                    label='下載字幕檔',
+                    data=zip_file,
+                    file_name=f"{st.session_state.filename}_subtitles.zip",
+                    mime='application/zip',
+                    key='hidden_download_btn'
+                )
+                st.session_state.downloaded = True
+                st.session_state.status_message = "下載完成！可以繼續處理新的檔案"
+                st.session_state.status_type = "success"
     
     st.markdown('</div>', unsafe_allow_html=True)
     
-    # 顯示說明
-    if uploaded_file is None:
-        st.info('請選擇要處理的影音檔案')
+    # 更新狀態訊息
+    if not uploaded_file:
+        st.session_state.status_message = "請選擇要處理的影音檔案"
+        st.session_state.status_type = "info"
     elif not formats:
-        st.warning('請至少選擇一種輸出格式')
+        st.session_state.status_message = "請至少選擇一種輸出格式"
+        st.session_state.status_type = "warning"
+    
+    # 顯示狀態訊息
+    st.markdown(
+        f'<div id="status-area"><div class="status-message status-{st.session_state.status_type}">{st.session_state.status_message}</div></div>',
+        unsafe_allow_html=True
+    )
 
 if __name__ == '__main__':
     main()
