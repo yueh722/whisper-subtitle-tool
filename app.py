@@ -1,6 +1,5 @@
 import os
 import sys
-import whisper
 import streamlit as st
 import subprocess
 import uuid
@@ -11,31 +10,38 @@ import zipfile
 import io
 import shutil
 from datetime import datetime
-import torch
 
-# 禁用 Streamlit 的自動重新運行
+# 完全禁用 Streamlit 的檔案監視功能
+os.environ['STREAMLIT_SERVER_WATCH_DIRS'] = 'false'
+os.environ['STREAMLIT_SERVER_RUN_ON_SAVE'] = 'false'
+st.set_option('server.fileWatcherType', 'none')
+
+# 設定 Streamlit 配置
 if not hasattr(st, '_is_initial_run'):
     st._is_initial_run = True
     st.set_option('server.runOnSave', False)
     st.set_option('server.maxUploadSize', 200)
 
-# 設定環境變數以避免 PyTorch 線程問題
-os.environ['OMP_NUM_THREADS'] = '1'
-torch.set_num_threads(1)
-
 # 設定日誌
 logging.basicConfig(level=logging.INFO,
                    format='%(asctime)s - %(levelname)s - %(message)s',
-                   handlers=[
-                       logging.StreamHandler(sys.stdout),
-                       logging.FileHandler('app.log')
-                   ])
+                   handlers=[logging.StreamHandler(sys.stdout)])
 logger = logging.getLogger(__name__)
+
+# 延遲導入 PyTorch 相關模組
+def get_whisper():
+    import torch
+    import whisper
+    # 設定 PyTorch 配置
+    torch.set_num_threads(1)
+    os.environ['OMP_NUM_THREADS'] = '1'
+    return whisper
 
 # 初始化全域變數和模型
 @st.cache_resource(show_spinner=False)
 def load_whisper_model():
     try:
+        whisper = get_whisper()
         return whisper.load_model("base")
     except Exception as e:
         logger.error(f"模型載入失敗：{str(e)}")
@@ -580,6 +586,7 @@ def process_audio(audio_file, formats):
                 temp_audio_path = temp_audio.name
                 
                 # 使用 Whisper 處理
+                import torch
                 with torch.inference_mode():
                     result = st.session_state.model.transcribe(temp_audio_path, verbose=False)
                 
