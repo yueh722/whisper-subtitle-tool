@@ -46,6 +46,18 @@ st.markdown("""
         border-bottom: 4px solid #2196F3;
     }
     
+    /* 按鈕容器樣式 */
+    div.button-container {
+        display: flex;
+        gap: 20px;
+        margin: 20px 0;
+    }
+    
+    div.button-container > div {
+        flex: 1;
+    }
+    
+    /* 按鈕樣式 */
     .stButton > button {
         width: 100%;
         background-color: #2196F3;
@@ -63,10 +75,11 @@ st.markdown("""
     }
     
     .stButton > button:disabled {
-        background-color: #ccc;
+        background-color: #ccc !important;
         cursor: not-allowed;
     }
     
+    /* 檔案上傳區域樣式 */
     div[data-testid="stFileUploader"] {
         background-color: rgba(36, 36, 68, 0.6);
         border: 1px solid #3498db;
@@ -74,12 +87,27 @@ st.markdown("""
         padding: 1rem;
     }
     
+    /* 格式選擇區域樣式 */
+    div.format-container {
+        display: flex;
+        gap: 10px;
+        margin: 20px 0;
+    }
+    
+    div.format-container > div {
+        flex: 1;
+        min-width: 0;  /* 允許元素縮小 */
+    }
+    
     .stCheckbox {
         background-color: rgba(36, 36, 68, 0.6);
-        padding: 0.5rem;
-        margin: 0.5rem 0;
+        padding: 0.8rem;
+        margin: 0;
         border-radius: 5px;
         border: 1px solid #3498db;
+        height: 100%;
+        display: flex;
+        align-items: center;
     }
     
     div[data-testid="stMarkdownContainer"] {
@@ -111,6 +139,16 @@ st.markdown("""
         color: #69f0ae;
         margin: 1rem 0;
         border: 1px solid #69f0ae;
+    }
+    
+    /* 隱藏 Streamlit 預設的漢堡選單 */
+    #MainMenu {
+        visibility: hidden;
+    }
+    
+    /* 隱藏 Streamlit 的頁尾 */
+    footer {
+        visibility: hidden;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -284,6 +322,8 @@ def main():
     # 格式選擇
     st.write("選擇輸出格式：")
     
+    # 使用自定義的格式容器
+    st.markdown('<div class="format-container">', unsafe_allow_html=True)
     col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
         txt_format = st.checkbox('純文字 (.txt)', value=True)
@@ -295,6 +335,7 @@ def main():
         tsv_format = st.checkbox('Excel格式 (.tsv)')
     with col5:
         json_format = st.checkbox('JSON格式')
+    st.markdown('</div>', unsafe_allow_html=True)
     
     formats = []
     if txt_format:
@@ -308,43 +349,39 @@ def main():
     if json_format:
         formats.append('json')
     
-    # 處理按鈕
-    process_btn = st.empty()
-    download_btn = st.empty()
+    # 使用自定義的按鈕容器
+    st.markdown('<div class="button-container">', unsafe_allow_html=True)
+    col1, col2 = st.columns(2)
     
-    # 根據狀態設定按鈕樣式
-    process_btn_disabled = not (uploaded_file and formats)
-    process_btn_class = "" if process_btn_disabled else "active"
+    with col1:
+        process_btn_disabled = not (uploaded_file and formats)
+        if st.button('開始提取', disabled=process_btn_disabled, key='process_btn'):
+            try:
+                with st.spinner('正在處理中...'):
+                    outputs = process_audio(uploaded_file, formats)
+                    st.session_state.outputs = outputs
+                    st.session_state.filename = os.path.splitext(uploaded_file.name)[0]
+                    st.session_state.processed = True
+                st.success('處理完成！請點擊右側按鈕下載字幕檔')
+            except Exception as e:
+                st.error(f'處理失敗：{str(e)}')
+                logger.error(f"處理失敗：{str(e)}")
+                st.session_state.processed = False
     
-    if process_btn.button('開始提取', disabled=process_btn_disabled, key='process_btn'):
-        try:
-            with st.spinner('正在處理中...'):
-                # 處理檔案
-                outputs = process_audio(uploaded_file, formats)
-                st.session_state.outputs = outputs
-                st.session_state.filename = os.path.splitext(uploaded_file.name)[0]
-                st.session_state.processed = True
-            
-            # 顯示成功訊息
-            st.success('處理完成！請點擊下方按鈕下載字幕檔')
-            
-        except Exception as e:
-            st.error(f'處理失敗：{str(e)}')
-            logger.error(f"處理失敗：{str(e)}")
-            st.session_state.processed = False
+    with col2:
+        if st.session_state.processed and st.session_state.outputs:
+            zip_file = create_zip_file(st.session_state.outputs, st.session_state.filename)
+            st.download_button(
+                label='下載字幕檔',
+                data=zip_file,
+                file_name=f"{st.session_state.filename}_subtitles.zip",
+                mime='application/zip',
+                key='download_btn'
+            )
+        else:
+            st.button('下載字幕檔', disabled=True, key='download_btn')
     
-    # 下載按鈕
-    if st.session_state.processed and st.session_state.outputs:
-        zip_file = create_zip_file(st.session_state.outputs, st.session_state.filename)
-        download_btn.download_button(
-            label='下載字幕檔',
-            data=zip_file,
-            file_name=f"{st.session_state.filename}_subtitles.zip",
-            mime='application/zip',
-            key='download_btn'
-        )
-    else:
-        download_btn.button('下載字幕檔', disabled=True, key='download_btn')
+    st.markdown('</div>', unsafe_allow_html=True)
     
     # 顯示說明
     if uploaded_file is None:
