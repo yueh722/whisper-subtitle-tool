@@ -384,6 +384,29 @@ st.markdown("""
     div[data-testid="stMarkdownContainer"] {
         color: var(--text-color) !important;
     }
+
+    /* 修改上傳檔案區域的樣式 */
+    .stFileUploader {
+        background-color: transparent !important;
+    }
+
+    /* 修改已選取檔案的文字顏色 */
+    .stFileUploader > div[data-testid="stMarkdownContainer"] {
+        color: #ffffff !important;
+        opacity: 1 !important;
+    }
+
+    .stFileUploader > div[data-testid="stMarkdownContainer"] p {
+        color: #ffffff !important;
+        opacity: 1 !important;
+    }
+
+    /* 確保檔案名稱清晰可見 */
+    .uploadedFileName {
+        color: #ffffff !important;
+        font-weight: 500 !important;
+        opacity: 1 !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -476,25 +499,17 @@ def process_audio(audio_file, formats):
     try:
         # 載入模型（如果尚未載入）
         if 'model' not in st.session_state:
-            st.session_state.status_message = "正在載入 Whisper 模型..."
-            st.session_state.status_type = "info"
-            st.rerun()
             st.session_state.model = whisper.load_model("base")
         
         # 建立臨時檔案
-        st.session_state.status_message = "正在處理音訊檔案..."
+        st.session_state.status_message = "字幕提取中..."
         st.session_state.status_type = "info"
-        st.rerun()
         
         with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as temp_audio:
             temp_audio.write(audio_file.getvalue())
             temp_audio_path = temp_audio.name
 
         # 使用 Whisper 處理
-        st.session_state.status_message = "正在提取字幕..."
-        st.session_state.status_type = "info"
-        st.rerun()
-        
         result = st.session_state.model.transcribe(temp_audio_path, verbose=False)
 
         # 生成不同格式的輸出
@@ -607,9 +622,8 @@ def main():
             try:
                 st.session_state.processing = True
                 st.session_state.downloaded = False
-                st.session_state.status_message = "正在載入 Whisper 模型..."
+                st.session_state.status_message = "字幕提取中..."
                 st.session_state.status_type = "info"
-                st.rerun()
                 
                 outputs = process_audio(uploaded_file, formats)
                 st.session_state.outputs = outputs
