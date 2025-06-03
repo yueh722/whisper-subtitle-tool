@@ -23,32 +23,84 @@ st.set_page_config(
 # 自定義 CSS
 st.markdown("""
 <style>
+    .stApp {
+        background-color: #1a1a2e;
+    }
+    
+    .main {
+        background-color: #242444;
+        padding: 2rem;
+        border-radius: 15px;
+        box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+        border: 1px solid #3498db;
+    }
+    
+    h1 {
+        color: white;
+        text-align: center;
+        margin-bottom: 2rem;
+        font-size: 2.2em;
+        text-transform: uppercase;
+        letter-spacing: 2px;
+        position: relative;
+        padding-bottom: 15px;
+    }
+    
+    h1:after {
+        content: '';
+        position: absolute;
+        bottom: 0;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 60px;
+        height: 4px;
+        background: #2196F3;
+        border-radius: 2px;
+    }
+    
     .stButton > button {
         width: 100%;
-        background-color: #2196F3;
+        background-color: rgba(33, 150, 243, 0.8);
         color: white;
+        padding: 0.8rem;
+        font-size: 1.1em;
+        border: none;
+        border-radius: 5px;
+        cursor: pointer;
+        transition: all 0.3s ease;
     }
+    
     .stButton > button:hover {
         background-color: #1976D2;
+        transform: translateY(-2px);
+    }
+    
+    .stButton > button:disabled {
+        background-color: rgba(36, 36, 68, 0.6);
+        cursor: not-allowed;
+    }
+    
+    div[data-testid="stFileUploader"] {
+        background-color: rgba(36, 36, 68, 0.6);
+        border: 1px solid #3498db;
+        border-radius: 5px;
+        padding: 1rem;
+    }
+    
+    .stCheckbox {
+        background-color: rgba(36, 36, 68, 0.6);
+        padding: 1rem;
+        border-radius: 5px;
+        border: 1px solid #3498db;
+        margin: 0.5rem 0;
+    }
+    
+    .stCheckbox label {
+        color: white !important;
+    }
+    
+    div[data-testid="stMarkdownContainer"] {
         color: white;
-    }
-    .status-info {
-        padding: 1rem;
-        border-radius: 0.5rem;
-        background-color: #e3f2fd;
-        color: #0d47a1;
-    }
-    .status-error {
-        padding: 1rem;
-        border-radius: 0.5rem;
-        background-color: #ffebee;
-        color: #c62828;
-    }
-    .status-success {
-        padding: 1rem;
-        border-radius: 0.5rem;
-        background-color: #e8f5e9;
-        color: #2e7d32;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -155,6 +207,26 @@ def process_audio(audio_file, formats):
         
         if 'srt' in formats:
             outputs['srt'] = write_srt(result['segments'])
+            
+        if 'vtt' in formats:
+            outputs['vtt'] = write_vtt(result['segments'])
+            
+        if 'tsv' in formats:
+            outputs['tsv'] = '開始時間\t結束時間\t文字內容\n' + '\n'.join(
+                f"{format_timestamp(seg['start'])}\t{format_timestamp(seg['end'])}\t{clean_text(seg['text'])}"
+                for seg in processed_segments
+            )
+            
+        if 'json' in formats:
+            clean_result = {
+                'text': '\n'.join(clean_text(segment['text']) for segment in processed_segments),
+                'segments': [{
+                    'start': segment['start'],
+                    'end': segment['end'],
+                    'text': clean_text(segment['text'])
+                } for segment in processed_segments]
+            }
+            outputs['json'] = json.dumps(clean_result, ensure_ascii=False, indent=2)
         
         # 清理臨時檔案
         os.unlink(temp_audio_path)
@@ -169,42 +241,77 @@ def main():
     st.title("智能字幕提取系統")
     
     # 檔案上傳
-    uploaded_file = st.file_uploader("選擇影音檔", type=['mp3', 'wav', 'mp4', 'mkv', 'avi', 'mov'])
+    uploaded_file = st.file_uploader(
+        "選擇影音檔",
+        type=['mp3', 'wav', 'mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm'],
+        help="支援多種影音格式，包括 MP3、WAV、MP4、MKV 等"
+    )
     
     # 格式選擇
-    col1, col2 = st.columns(2)
+    st.write("選擇輸出格式：")
+    col1, col2, col3, col4, col5 = st.columns(5)
+    
     with col1:
         txt_format = st.checkbox('純文字 (.txt)', value=True)
     with col2:
         srt_format = st.checkbox('字幕檔 (.srt)', value=True)
+    with col3:
+        vtt_format = st.checkbox('網頁字幕 (.vtt)')
+    with col4:
+        tsv_format = st.checkbox('Excel格式 (.tsv)')
+    with col5:
+        json_format = st.checkbox('JSON格式')
     
     formats = []
     if txt_format:
         formats.append('txt')
     if srt_format:
         formats.append('srt')
+    if vtt_format:
+        formats.append('vtt')
+    if tsv_format:
+        formats.append('tsv')
+    if json_format:
+        formats.append('json')
     
-    if uploaded_file is not None and formats and st.button('開始提取'):
+    # 處理按鈕
+    if uploaded_file is not None and formats and st.button('開始提取', key='process_btn'):
         try:
-            # 處理檔案
-            outputs = process_audio(uploaded_file, formats)
+            with st.spinner('正在處理中...'):
+                # 處理檔案
+                outputs = process_audio(uploaded_file, formats)
             
-            # 顯示下載按鈕
-            st.success('處理完成！')
+            # 顯示成功訊息
+            st.success('處理完成！請點擊下方按鈕下載字幕檔')
             
             # 為每個格式創建下載按鈕
-            for fmt, content in outputs.items():
-                filename = f"{os.path.splitext(uploaded_file.name)[0]}.{fmt}"
-                st.download_button(
-                    label=f'下載 {fmt.upper()} 檔案',
-                    data=content.encode('utf-8'),
-                    file_name=filename,
-                    mime='text/plain'
-                )
+            cols = st.columns(len(outputs))
+            for i, (fmt, content) in enumerate(outputs.items()):
+                with cols[i]:
+                    filename = f"{os.path.splitext(uploaded_file.name)[0]}.{fmt}"
+                    mime_type = 'text/plain'
+                    if fmt == 'json':
+                        mime_type = 'application/json'
+                    elif fmt == 'tsv':
+                        mime_type = 'text/tab-separated-values'
+                    
+                    st.download_button(
+                        label=f'下載 {fmt.upper()} 檔案',
+                        data=content.encode('utf-8'),
+                        file_name=filename,
+                        mime=mime_type,
+                        key=f'download_{fmt}'
+                    )
                 
         except Exception as e:
             st.error(f'處理失敗：{str(e)}')
             logger.error(f"處理失敗：{str(e)}")
+    
+    # 顯示說明
+    if uploaded_file is None:
+        st.info('請選擇要處理的影音檔案')
+    elif not formats:
+        st.warning('請至少選擇一種輸出格式')
 
 if __name__ == '__main__':
     main()
