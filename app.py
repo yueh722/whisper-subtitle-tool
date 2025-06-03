@@ -10,26 +10,11 @@ import zipfile
 import io
 import shutil
 from datetime import datetime
-import whisper
-import torch
 
 # 設定日誌
 logging.basicConfig(level=logging.INFO,
                    format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
-# 初始化模型
-@st.cache_resource(show_spinner=False)
-def load_whisper_model():
-    try:
-        return whisper.load_model("base")
-    except Exception as e:
-        logger.error(f"模型載入失敗：{str(e)}")
-        return None
-
-# 確保模型只載入一次
-if 'model' not in st.session_state:
-    st.session_state.model = load_whisper_model()
 
 # 設定頁面
 st.set_page_config(
@@ -37,6 +22,24 @@ st.set_page_config(
     page_icon="🎬",
     layout="centered"
 )
+
+# 初始化 session state
+if 'model' not in st.session_state:
+    st.session_state.model = None
+    st.session_state.model_loaded = False
+
+# 延遲載入 whisper 和 torch
+def load_whisper_model():
+    if not st.session_state.model_loaded:
+        try:
+            import whisper
+            st.session_state.model = whisper.load_model("base")
+            st.session_state.model_loaded = True
+            return True
+        except Exception as e:
+            logger.error(f"模型載入失敗：{str(e)}")
+            return False
+    return True
 
 # 自定義 CSS
 st.markdown("""
@@ -193,10 +196,8 @@ def process_audio(audio_file, formats):
     """處理音訊檔案並生成字幕"""
     try:
         # 確保模型已載入
-        if st.session_state.model is None:
-            st.session_state.model = load_whisper_model()
-            if st.session_state.model is None:
-                raise Exception("無法載入語音識別模型，請重新啟動應用程式")
+        if not load_whisper_model():
+            raise Exception("無法載入語音識別模型，請重新啟動應用程式")
         
         # 建立臨時檔案
         with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as temp_audio:
@@ -205,6 +206,7 @@ def process_audio(audio_file, formats):
                 temp_audio_path = temp_audio.name
                 
                 # 使用 Whisper 處理
+                import torch
                 with torch.inference_mode():
                     result = st.session_state.model.transcribe(temp_audio_path, verbose=False)
                 
