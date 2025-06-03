@@ -428,66 +428,87 @@ st.markdown("""
 
     /* 修改上傳檔案區域的樣式 */
     .stFileUploader {
+        background-color: rgba(36, 36, 68, 0.4) !important;
+        border: 1px solid var(--border-color) !important;
+        border-radius: 5px !important;
+        padding: 20px !important;
+    }
+
+    /* 上傳區域內所有文字的基本樣式 */
+    .stFileUploader * {
+        color: #ffffff !important;
+    }
+
+    /* 拖放區域的文字樣式 */
+    [data-testid="stFileUploadDropzone"] {
+        color: #ffffff !important;
         background-color: transparent !important;
     }
 
-    /* 修改已選取檔案的文字顏色 */
-    .stFileUploader > div[data-testid="stMarkdownContainer"] {
+    /* 上傳區域的說明文字 */
+    .stFileUploader [data-testid="stMarkdownContainer"] {
         color: #ffffff !important;
         opacity: 1 !important;
     }
 
-    .stFileUploader > div[data-testid="stMarkdownContainer"] p {
-        color: #ffffff !important;
-        opacity: 1 !important;
-    }
-
-    /* 確保檔案名稱清晰可見 */
-    .uploadedFileName {
-        color: #ffffff !important;
-        font-weight: 500 !important;
-        opacity: 1 !important;
-    }
-
-    /* 檔案上傳區域的所有文字顏色 */
-    .stFileUploader > div {
-        color: #ffffff !important;
-    }
-    
-    /* 特別指定上傳檔案名稱和大小的顏色 */
-    .stFileUploader [data-testid="stMarkdownContainer"] > div > p {
+    /* 檔案名稱和大小的文字樣式 */
+    .stFileUploader [data-testid="stMarkdownContainer"] p {
         color: #ffffff !important;
         opacity: 1 !important;
         font-weight: 500 !important;
+        text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.2) !important;
     }
-    
-    /* 確保檔案資訊的所有文字都是白色 */
-    .stFileUploader [data-testid="stMarkdownContainer"] p,
-    .stFileUploader [data-testid="stMarkdownContainer"] span,
-    .stFileUploader [data-testid="stMarkdownContainer"] div {
-        color: #ffffff !important;
-        opacity: 1 !important;
-    }
-    
-    /* 上傳區域的提示文字顏色 */
-    .stFileUploader [data-testid="stFileUploadDropzone"] {
-        color: #ffffff !important;
-    }
-    
-    /* 檔案大小資訊的顏色 */
+
+    /* 檔案大小資訊的樣式 */
     .stFileUploader small {
-        color: rgba(255, 255, 255, 0.8) !important;
+        color: rgba(255, 255, 255, 0.9) !important;
         opacity: 1 !important;
     }
-    
-    /* 上傳按鈕內的文字顏色 */
+
+    /* 上傳按鈕的樣式 */
     .stFileUploader button {
+        background-color: var(--primary-color) !important;
+        color: white !important;
+        border: none !important;
+        padding: 0.5rem 1rem !important;
+        border-radius: 4px !important;
+        cursor: pointer !important;
+        font-weight: 500 !important;
+    }
+
+    /* 上傳按鈕懸停效果 */
+    .stFileUploader button:hover {
+        background-color: var(--primary-dark) !important;
+        transform: translateY(-1px) !important;
+    }
+
+    /* 拖放提示文字的樣式 */
+    .stFileUploader [data-testid="stFileUploadDropzone"] > div {
+        color: #ffffff !important;
+        font-size: 1em !important;
+        opacity: 0.9 !important;
+    }
+
+    /* 檔案類型提示文字的樣式 */
+    .stFileUploader [data-testid="stMarkdownContainer"] div {
+        color: rgba(255, 255, 255, 0.8) !important;
+        font-size: 0.9em !important;
+    }
+
+    /* 確保所有文字元素都是白色 */
+    .stFileUploader div,
+    .stFileUploader p,
+    .stFileUploader span,
+    .stFileUploader label {
         color: #ffffff !important;
     }
-    
-    /* 確保拖放區域的文字顏色 */
-    [data-testid="stFileUploadDropzone"] > div {
+
+    /* 上傳區域的提示文字 */
+    .upload-text {
         color: #ffffff !important;
+        font-size: 1.1em !important;
+        margin-bottom: 10px !important;
+        text-align: center !important;
     }
 </style>
 """, unsafe_allow_html=True)
