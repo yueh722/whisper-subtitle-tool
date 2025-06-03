@@ -10,42 +10,11 @@ import zipfile
 import io
 import shutil
 from datetime import datetime
-import whisper
-import torch
 
 # 設定日誌
 logging.basicConfig(level=logging.INFO,
                    format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
-# 初始化 session state
-if 'model' not in st.session_state:
-    st.session_state.model = None
-if 'processed' not in st.session_state:
-    st.session_state.processed = False
-if 'outputs' not in st.session_state:
-    st.session_state.outputs = None
-if 'filename' not in st.session_state:
-    st.session_state.filename = None
-if 'status_message' not in st.session_state:
-    st.session_state.status_message = "請選擇要處理的影音檔案"
-if 'status_type' not in st.session_state:
-    st.session_state.status_type = "info"
-if 'processing' not in st.session_state:
-    st.session_state.processing = False
-if 'downloaded' not in st.session_state:
-    st.session_state.downloaded = False
-
-# 初始化模型
-def load_whisper_model():
-    if not st.session_state.model:
-        try:
-            st.session_state.model = whisper.load_model("base")
-            return st.session_state.model
-        except Exception as e:
-            logger.error(f"模型載入失敗：{str(e)}")
-            return None
-    return st.session_state.model
 
 # 設定頁面
 st.set_page_config(
@@ -57,109 +26,135 @@ st.set_page_config(
 # 自定義 CSS
 st.markdown("""
 <style>
-    :root {
-        --primary-color: #2196F3;
-        --primary-dark: #1976D2;
-        --background-color: #1a1a2e;
-        --container-bg: #242444;
-        --text-color: #ffffff;
-        --border-color: #3498db;
-    }
-
     .stApp {
-        background-color: var(--background-color);
+        background-color: #1E1E1E;
     }
 
     .main {
-        background-color: var(--container-bg);
-        color: var(--text-color);
-        max-width: 800px;
-        margin: 0 auto;
+        color: #FFFFFF;
     }
 
+    /* 標題樣式 */
     h1 {
-        color: var(--text-color) !important;
-        text-align: center !important;
-        margin-bottom: 30px !important;
-        font-size: 2.2em !important;
-        text-transform: uppercase !important;
-        letter-spacing: 2px !important;
-        position: relative !important;
-        padding-bottom: 15px !important;
+        color: #FFFFFF !important;
+        text-align: center;
+        padding: 20px 0;
     }
 
-    h1:after {
-        content: '' !important;
-        position: absolute !important;
-        bottom: 0 !important;
-        left: 50% !important;
-        transform: translateX(-50%) !important;
-        width: 60px !important;
-        height: 4px !important;
-        background: var(--primary-color) !important;
-        border-radius: 2px !important;
+    /* 上傳區域樣式 */
+    .stFileUploader {
+        background-color: rgba(255, 255, 255, 0.1);
+        border: 2px dashed #4A90E2;
+        border-radius: 10px;
+        padding: 20px;
+        margin: 20px 0;
     }
 
-    /* 檔案上傳區域樣式 */
-    section[data-testid="stFileUploader"] {
-        background-color: transparent !important;
-        border: 1px solid var(--border-color) !important;
-        border-radius: 5px !important;
-        padding: 0 !important;
-        margin-bottom: 20px !important;
-        width: 100% !important;
-        max-width: 800px !important;
+    /* 確保上傳區域內的所有文字都是白色 */
+    .stFileUploader > div {
+        color: #FFFFFF !important;
     }
 
-    section[data-testid="stFileUploader"] [data-testid="stFileUploadDropzone"] {
-        background-color: transparent !important;
-        border: none !important;
-        padding: 20px !important;
-        width: 100% !important;
+    .stFileUploader p {
+        color: #FFFFFF !important;
     }
 
-    /* 修改上傳按鈕文字 */
-    button[data-testid="baseButton-secondary"] {
-        background-color: var(--primary-color) !important;
-        border-color: var(--primary-color) !important;
+    .stFileUploader span {
+        color: #FFFFFF !important;
+    }
+
+    .stFileUploader small {
+        color: #FFFFFF !important;
+    }
+
+    /* 上傳按鈕樣式 */
+    .stFileUploader button {
+        background-color: #4A90E2 !important;
         color: white !important;
-        width: 100% !important;
-        height: 42px !important;
-        border-radius: 5px !important;
-        font-size: 1em !important;
-        cursor: pointer !important;
-        margin: 10px 0 !important;
-    }
-
-    button[data-testid="baseButton-secondary"]:hover {
-        background-color: var(--primary-dark) !important;
-        border-color: var(--primary-dark) !important;
-    }
-
-    /* 上傳區域文字樣式 */
-    section[data-testid="stFileUploader"] [data-testid="stMarkdownContainer"] p {
-        color: var(--text-color) !important;
-        font-size: 1.1em !important;
-        margin: 5px 0 !important;
-    }
-
-    section[data-testid="stFileUploader"] small {
-        color: rgba(255, 255, 255, 0.7) !important;
     }
 
     /* 標題文字樣式 */
     .section-title {
-        color: white !important;
-        font-size: 1.1em !important;
+        color: #FFFFFF !important;
+        font-size: 1.2em;
+        margin: 20px 0 10px 0;
+    }
+
+    /* Checkbox 樣式 */
+    .stCheckbox {
+        color: #FFFFFF !important;
+    }
+
+    .stCheckbox label {
+        color: #FFFFFF !important;
+    }
+
+    /* 按鈕容器樣式 */
+    div.element-container:has(> div.stButton), 
+    div.element-container:has(> div.stDownloadButton) {
+        margin: 0 !important;
+        padding: 0 !important;
+        width: 100% !important;
+    }
+
+    div.row-widget.stButton,
+    div.row-widget.stDownloadButton {
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+
+    /* 按鈕樣式 */
+    .stButton > button {
+        width: 100% !important;
+        height: 46px !important;
+        margin: 10px 0 !important;
+        background-color: rgba(36, 36, 68, 0.6) !important;
+        color: rgba(255, 255, 255, 0.3) !important;
+        border: 1px solid #4A90E2 !important;
+        border-radius: 5px !important;
+        font-size: 16px !important;
         font-weight: 500 !important;
-        margin-bottom: 0.5em !important;
-        margin-top: 1em !important;
+        cursor: not-allowed !important;
+        transition: all 0.3s ease !important;
+    }
+
+    .stButton > button:disabled {
+        background-color: rgba(36, 36, 68, 0.6) !important;
+        color: rgba(255, 255, 255, 0.3) !important;
+        border-color: rgba(74, 144, 226, 0.3) !important;
+        cursor: not-allowed !important;
+    }
+
+    .stButton > button:not(:disabled) {
+        background-color: #4A90E2 !important;
+        color: white !important;
+        border-color: #4A90E2 !important;
+        cursor: pointer !important;
+    }
+
+    .stButton > button:not(:disabled):hover {
+        background-color: #357ABD !important;
+        border-color: #357ABD !important;
+        transform: translateY(-2px) !important;
+    }
+
+    /* 按鈕行容器 */
+    div.css-1kyxreq {
+        display: flex !important;
+        gap: 20px !important;
+        margin: 20px 0 !important;
+        align-items: stretch !important;
+    }
+
+    div.css-1kyxreq > div {
+        flex: 1 !important;
+        margin: 0 !important;
     }
 
     /* 格式選擇區域樣式 */
     div.row-widget.stCheckbox {
         background-color: rgba(36, 36, 68, 0.4) !important;
-        border: 1px solid var(--border-color) !important;
+        border: 1px solid #4A90E2 !important;
         border-radius: 5px !important;
         padding: 10px !important;
         margin: 5px 0 !important;
@@ -171,8 +166,8 @@ st.markdown("""
     }
 
     div.row-widget.stCheckbox:hover {
-        background-color: rgba(33, 150, 243, 0.2) !important;
-        border-color: var(--primary-color) !important;
+        background-color: rgba(74, 144, 226, 0.2) !important;
+        border-color: #4A90E2 !important;
     }
 
     /* Checkbox 容器 */
@@ -205,8 +200,8 @@ st.markdown("""
     }
 
     div.row-widget.stCheckbox input[type="checkbox"]:checked {
-        background-color: #ff4b4b !important;
-        border-color: #ff4b4b !important;
+        background-color: #4A90E2 !important;
+        border-color: #4A90E2 !important;
     }
 
     div.row-widget.stCheckbox input[type="checkbox"]:checked::after {
@@ -270,78 +265,10 @@ st.markdown("""
         color: white !important;
     }
 
-    /* 按鈕容器 */
-    div.element-container:has(> div.stButton), 
-    div.element-container:has(> div.stDownloadButton) {
-        margin: 0 !important;
-        padding: 0 !important;
-        width: 100% !important;
-        max-width: 800px !important;
-    }
-
-    div.row-widget.stButton,
-    div.row-widget.stDownloadButton {
-        margin: 0 !important;
-        padding: 0 !important;
-    }
-
-    /* 按鈕樣式 */
-    .stButton > button {
-        width: 100% !important;
-        height: 42px !important;
-        margin: 0 !important;
-        background-color: rgba(36, 36, 68, 0.6) !important;
-        color: rgba(255, 255, 255, 0.3) !important;
-        border: 1px solid var(--border-color) !important;
-        border-radius: 5px !important;
-        cursor: not-allowed !important;
-        transition: all 0.3s ease !important;
-    }
-
-    .stButton > button:disabled {
-        background-color: rgba(36, 36, 68, 0.6) !important;
-        color: rgba(255, 255, 255, 0.3) !important;
-        border-color: rgba(52, 152, 219, 0.3) !important;
-        cursor: not-allowed !important;
-    }
-
-    .stButton > button:not(:disabled) {
-        background-color: var(--primary-color) !important;
-        color: white !important;
-        border-color: var(--primary-color) !important;
-        cursor: pointer !important;
-    }
-
-    .stButton > button:not(:disabled):hover {
-        background-color: var(--primary-dark) !important;
-        border-color: var(--primary-dark) !important;
-        transform: translateY(-2px) !important;
-    }
-
-    /* 下載按鈕容器 */
-    div[data-testid="stDownloadButton"] {
-        display: none !important;
-    }
-
-    /* 按鈕行容器 */
-    div.css-1kyxreq {
-        display: flex !important;
-        gap: 20px !important;
-        margin: 20px 0 !important;
-        align-items: stretch !important;
-        width: 100% !important;
-        max-width: 800px !important;
-    }
-
-    div.css-1kyxreq > div {
-        flex: 1 !important;
-        margin: 0 !important;
-    }
-
     /* 提示訊息容器 */
     div.stAlert {
         background-color: rgba(36, 36, 68, 0.4) !important;
-        border: 1px solid var(--border-color) !important;
+        border: 1px solid #4A90E2 !important;
         border-radius: 5px !important;
         padding: 16px !important;
         margin: 20px 0 !important;
@@ -360,7 +287,7 @@ st.markdown("""
         min-height: 60px !important;
         width: 100% !important;
         max-width: 800px !important;
-        border: 1px solid var(--border-color) !important;
+        border: 1px solid #4A90E2 !important;
         box-sizing: border-box !important;
     }
 
@@ -376,7 +303,7 @@ st.markdown("""
     }
 
     .status-info {
-        background-color: rgba(52, 152, 219, 0.2) !important;
+        background-color: rgba(74, 144, 226, 0.2) !important;
     }
 
     .status-error {
@@ -410,13 +337,24 @@ st.markdown("""
     #MainMenu, footer {
         visibility: hidden;
     }
-
-    /* 確保所有文字容器中的文字可見 */
-    div[data-testid="stMarkdownContainer"] {
-        color: var(--text-color) !important;
-    }
 </style>
 """, unsafe_allow_html=True)
+
+# 初始化 session state
+if 'processed' not in st.session_state:
+    st.session_state.processed = False
+if 'outputs' not in st.session_state:
+    st.session_state.outputs = None
+if 'filename' not in st.session_state:
+    st.session_state.filename = None
+if 'status_message' not in st.session_state:
+    st.session_state.status_message = "請選擇要處理的影音檔案"
+if 'status_type' not in st.session_state:
+    st.session_state.status_type = "info"
+if 'processing' not in st.session_state:
+    st.session_state.processing = False
+if 'downloaded' not in st.session_state:
+    st.session_state.downloaded = False
 
 def format_timestamp(seconds, always_include_hours=False):
     """將秒數轉換為 SRT/VTT 時間戳格式"""
@@ -505,9 +443,9 @@ def check_ffmpeg():
 def process_audio(audio_file, formats):
     """處理音訊檔案並生成字幕"""
     try:
-        # 確保模型已載入
-        if not st.session_state.model:
-            raise Exception("無法載入語音識別模型，請重新啟動應用程式")
+        # 載入必要的套件
+        import whisper
+        import torch
         
         # 建立臨時檔案
         with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as temp_audio:
@@ -516,8 +454,9 @@ def process_audio(audio_file, formats):
                 temp_audio_path = temp_audio.name
                 
                 # 使用 Whisper 處理
+                model = whisper.load_model("base")
                 with torch.inference_mode():
-                    result = st.session_state.model.transcribe(temp_audio_path, verbose=False)
+                    result = model.transcribe(temp_audio_path, verbose=False)
                 
                 # 生成不同格式的輸出
                 outputs = {}
