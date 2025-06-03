@@ -59,25 +59,30 @@ st.markdown("""
     
     /* 按鈕樣式 */
     .stButton > button {
-        width: 100%;
+        width: 100% !important;
         background-color: #2196F3 !important;
         color: white !important;
-        padding: 0.8rem;
-        font-size: 1.1em;
-        border: none;
-        border-radius: 5px;
-        cursor: pointer;
-        transition: all 0.3s ease;
+        padding: 0.8rem !important;
+        font-size: 1.1em !important;
+        border: none !important;
+        border-radius: 5px !important;
+        cursor: pointer !important;
+        transition: all 0.3s ease !important;
+        opacity: 1 !important;
+        font-weight: bold !important;
     }
     
     .stButton > button:hover {
         background-color: #1976D2 !important;
+        color: white !important;
+        opacity: 1 !important;
     }
     
     .stButton > button:disabled {
-        background-color: #ccc !important;
-        color: #666666 !important;
-        cursor: not-allowed;
+        background-color: rgba(204, 204, 204, 0.5) !important;
+        color: rgba(255, 255, 255, 0.7) !important;
+        cursor: not-allowed !important;
+        opacity: 0.7 !important;
     }
     
     /* 檔案上傳區域樣式 */
@@ -201,10 +206,27 @@ st.markdown("""
     .stDownloadButton > button {
         background-color: #2196F3 !important;
         color: white !important;
+        opacity: 1 !important;
+        font-weight: bold !important;
     }
     
     .stDownloadButton > button:hover {
         background-color: #1976D2 !important;
+        color: white !important;
+        opacity: 1 !important;
+    }
+    
+    .stDownloadButton > button:disabled {
+        background-color: rgba(204, 204, 204, 0.5) !important;
+        color: rgba(255, 255, 255, 0.7) !important;
+        opacity: 0.7 !important;
+    }
+    
+    /* 確保所有按鈕文字可見 */
+    button[kind="primary"], button[kind="secondary"] {
+        color: white !important;
+        opacity: 1 !important;
+        font-weight: bold !important;
     }
     
     .file-input-label {
