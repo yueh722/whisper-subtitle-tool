@@ -60,8 +60,8 @@ st.markdown("""
     /* 按鈕樣式 */
     .stButton > button {
         width: 100%;
-        background-color: #2196F3;
-        color: white;
+        background-color: #2196F3 !important;
+        color: white !important;
         padding: 0.8rem;
         font-size: 1.1em;
         border: none;
@@ -71,11 +71,12 @@ st.markdown("""
     }
     
     .stButton > button:hover {
-        background-color: #1976D2;
+        background-color: #1976D2 !important;
     }
     
     .stButton > button:disabled {
         background-color: #ccc !important;
+        color: #666666 !important;
         cursor: not-allowed;
     }
     
@@ -85,6 +86,19 @@ st.markdown("""
         border: 1px solid #3498db;
         border-radius: 5px;
         padding: 1rem;
+        color: white !important;
+    }
+    
+    div[data-testid="stFileUploader"] p {
+        color: white !important;
+    }
+    
+    div[data-testid="stFileUploader"] small {
+        color: rgba(255, 255, 255, 0.8) !important;
+    }
+    
+    div[data-testid="stFileUploader"] button {
+        color: white !important;
     }
     
     /* 格式選擇區域樣式 */
@@ -96,22 +110,54 @@ st.markdown("""
     
     div.format-container > div {
         flex: 1;
-        min-width: 0;  /* 允許元素縮小 */
+        min-width: 0;
+        width: 20%;
     }
     
     .stCheckbox {
-        background-color: rgba(36, 36, 68, 0.6);
-        padding: 0.8rem;
-        margin: 0;
-        border-radius: 5px;
-        border: 1px solid #3498db;
-        height: 100%;
-        display: flex;
-        align-items: center;
+        background-color: rgba(36, 36, 68, 0.6) !important;
+        padding: 0.8rem !important;
+        margin: 0 !important;
+        border-radius: 5px !important;
+        border: 1px solid #3498db !important;
+        height: 100% !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        text-align: center !important;
+        min-height: 60px !important;
+        color: white !important;
     }
     
-    div[data-testid="stMarkdownContainer"] {
-        color: #ffffff;
+    div.stCheckbox label {
+        color: white !important;
+    }
+    
+    div.stCheckbox p {
+        color: white !important;
+        font-size: 1em !important;
+        line-height: 1.2 !important;
+        margin: 0 !important;
+    }
+    
+    /* 確保所有文字都是白色 */
+    .stMarkdown, .stMarkdown p {
+        color: white !important;
+    }
+    
+    /* 修改 checkbox 的顏色 */
+    .stCheckbox > label > div[data-testid="stMarkdownContainer"] > p {
+        color: white !important;
+        white-space: pre-line !important;
+    }
+    
+    /* 確保按鈕文字可見 */
+    .stButton button {
+        color: white !important;
+    }
+    
+    .stButton button:disabled {
+        color: rgba(255, 255, 255, 0.5) !important;
     }
     
     .status-info {
@@ -149,6 +195,73 @@ st.markdown("""
     /* 隱藏 Streamlit 的頁尾 */
     footer {
         visibility: hidden;
+    }
+    
+    /* 下載按鈕特別樣式 */
+    .stDownloadButton > button {
+        background-color: #2196F3 !important;
+        color: white !important;
+    }
+    
+    .stDownloadButton > button:hover {
+        background-color: #1976D2 !important;
+    }
+    
+    .file-input-label {
+        display: inline-block;
+        padding: 15px 20px;
+        background-color: rgba(36, 36, 68, 0.6);
+        color: var(--text-color) !important;
+        border-radius: 5px;
+        cursor: pointer;
+        width: 100%;
+        text-align: center;
+        transition: all 0.3s ease;
+        border: 1px solid var(--border-color);
+        font-size: 1.5em;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .file-input-label.has-file {
+        background-color: rgba(33, 150, 243, 0.15);
+        border-color: var(--primary-color);
+        filter: brightness(1.5);
+        color: var(--text-color) !important;
+    }
+
+    .file-input-label:hover {
+        background-color: rgba(33, 150, 243, 0.3);
+        color: var(--text-color) !important;
+    }
+    
+    .format-option label {
+        display: block;
+        padding: 12px 15px;
+        text-align: center;
+        background-color: rgba(36, 36, 68, 0.6);
+        border: 1px solid var(--border-color);
+        border-radius: 5px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        font-size: 0.9em;
+        color: var(--text-color) !important;
+        opacity: 1;
+    }
+
+    .format-option input[type="checkbox"]:checked + label {
+        background-color: rgba(33, 150, 243, 0.15);
+        border-color: var(--primary-color);
+        opacity: 1;
+        filter: brightness(1.5);
+        color: var(--text-color) !important;
+    }
+
+    .format-option label:hover {
+        opacity: 0.8;
+        background-color: rgba(33, 150, 243, 0.2);
+        color: var(--text-color) !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -326,15 +439,15 @@ def main():
     st.markdown('<div class="format-container">', unsafe_allow_html=True)
     col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
-        txt_format = st.checkbox('純文字 (.txt)', value=True)
+        txt_format = st.checkbox('純文字\n(.txt)', value=True)
     with col2:
-        srt_format = st.checkbox('字幕檔 (.srt)', value=True)
+        srt_format = st.checkbox('字幕檔\n(.srt)', value=True)
     with col3:
-        vtt_format = st.checkbox('網頁字幕 (.vtt)')
+        vtt_format = st.checkbox('網頁字幕\n(.vtt)')
     with col4:
-        tsv_format = st.checkbox('Excel格式 (.tsv)')
+        tsv_format = st.checkbox('Excel格式\n(.tsv)')
     with col5:
-        json_format = st.checkbox('JSON格式')
+        json_format = st.checkbox('JSON格式\n(.json)')
     st.markdown('</div>', unsafe_allow_html=True)
     
     formats = []
