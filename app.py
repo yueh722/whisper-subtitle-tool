@@ -11,10 +11,9 @@ import io
 import shutil
 from datetime import datetime
 
-# 完全禁用 Streamlit 的檔案監視功能
+# 設定環境變數來控制 Streamlit 行為
 os.environ['STREAMLIT_SERVER_WATCH_DIRS'] = 'false'
 os.environ['STREAMLIT_SERVER_RUN_ON_SAVE'] = 'false'
-st.set_option('server.fileWatcherType', 'none')
 
 # 設定 Streamlit 配置
 if not hasattr(st, '_is_initial_run'):
@@ -30,12 +29,19 @@ logger = logging.getLogger(__name__)
 
 # 延遲導入 PyTorch 相關模組
 def get_whisper():
-    import torch
-    import whisper
-    # 設定 PyTorch 配置
-    torch.set_num_threads(1)
-    os.environ['OMP_NUM_THREADS'] = '1'
-    return whisper
+    try:
+        import torch
+        import whisper
+        # 設定 PyTorch 配置
+        if torch.cuda.is_available():
+            torch.cuda.set_device(0)
+        else:
+            torch.set_num_threads(1)
+            os.environ['OMP_NUM_THREADS'] = '1'
+        return whisper
+    except Exception as e:
+        logger.error(f"PyTorch/Whisper 導入失敗：{str(e)}")
+        raise
 
 # 初始化全域變數和模型
 @st.cache_resource(show_spinner=False)
