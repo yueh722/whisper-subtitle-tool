@@ -476,17 +476,26 @@ def process_audio(audio_file, formats):
     try:
         # 載入模型（如果尚未載入）
         if 'model' not in st.session_state:
-            with st.spinner('正在載入 Whisper 模型...'):
-                st.session_state.model = whisper.load_model("base")
+            st.session_state.status_message = "正在載入 Whisper 模型..."
+            st.session_state.status_type = "info"
+            st.rerun()
+            st.session_state.model = whisper.load_model("base")
         
         # 建立臨時檔案
+        st.session_state.status_message = "正在處理音訊檔案..."
+        st.session_state.status_type = "info"
+        st.rerun()
+        
         with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as temp_audio:
             temp_audio.write(audio_file.getvalue())
             temp_audio_path = temp_audio.name
 
         # 使用 Whisper 處理
-        with st.spinner('正在提取字幕...'):
-            result = st.session_state.model.transcribe(temp_audio_path, verbose=False)
+        st.session_state.status_message = "正在提取字幕..."
+        st.session_state.status_type = "info"
+        st.rerun()
+        
+        result = st.session_state.model.transcribe(temp_audio_path, verbose=False)
 
         # 生成不同格式的輸出
         outputs = {}
@@ -553,9 +562,10 @@ def main():
     # 檔案上傳
     st.markdown('<div class="section-title">選擇影音檔：</div>', unsafe_allow_html=True)
     uploaded_file = st.file_uploader(
-        "",
+        "上傳檔案",
         type=['mp3', 'wav', 'mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm'],
         help="支援多種影音格式，包括 MP3、WAV、MP4、MKV 等",
+        label_visibility="collapsed",
         on_change=lambda: setattr(st.session_state, 'downloaded', False)
     )
     
@@ -597,8 +607,10 @@ def main():
             try:
                 st.session_state.processing = True
                 st.session_state.downloaded = False
-                st.session_state.status_message = "正在提取字幕..."
+                st.session_state.status_message = "正在載入 Whisper 模型..."
                 st.session_state.status_type = "info"
+                st.rerun()
+                
                 outputs = process_audio(uploaded_file, formats)
                 st.session_state.outputs = outputs
                 st.session_state.filename = os.path.splitext(uploaded_file.name)[0]
@@ -615,20 +627,22 @@ def main():
     
     with col2:
         download_btn_disabled = not st.session_state.processed or st.session_state.downloaded
-        download_btn_class = "" if download_btn_disabled else "active"
-        if st.button('下載字幕檔', disabled=download_btn_disabled, key='download_btn'):
-            if st.session_state.outputs:
-                zip_file = create_zip_file(st.session_state.outputs, st.session_state.filename)
-                st.download_button(
-                    label='下載字幕檔',
-                    data=zip_file,
-                    file_name=f"{st.session_state.filename}_subtitles.zip",
-                    mime='application/zip',
-                    key='hidden_download_btn'
-                )
+        if st.session_state.outputs and not st.session_state.downloaded:
+            zip_file = create_zip_file(st.session_state.outputs, st.session_state.filename)
+            if st.download_button(
+                label='下載字幕檔',
+                data=zip_file,
+                file_name=f"{st.session_state.filename}_subtitles.zip",
+                mime='application/zip',
+                disabled=download_btn_disabled,
+                key='download_btn'
+            ):
                 st.session_state.downloaded = True
                 st.session_state.status_message = "下載完成！可以繼續處理新的檔案"
                 st.session_state.status_type = "success"
+                st.rerun()
+        else:
+            st.button('下載字幕檔', disabled=True, key='download_btn_disabled')
     
     st.markdown('</div>', unsafe_allow_html=True)
     
