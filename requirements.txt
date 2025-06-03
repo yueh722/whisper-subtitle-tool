@@ -6,5 +6,6 @@ numpy
 tqdm
 more-itertools
 transformers>=4.19.0
-ffmpeg-python
-setuptools-rust 
+setuptools-rust
+flask>=2.0.0
+werkzeug>=2.0.0 
