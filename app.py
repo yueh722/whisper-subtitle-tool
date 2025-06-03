@@ -1,128 +1,80 @@
 import os
 import whisper
-import streamlit as st
-from datetime import datetime
+from flask import Flask, request, send_file, render_template_string, redirect, jsonify, make_response
+from werkzeug.utils import secure_filename
 import subprocess
 import uuid
-import json
-import logging
-import tempfile
 import zipfile
 import io
+import shutil
+import logging
+import threading
+import time
+import traceback
+import webbrowser
+import socket
+import json
+import atexit
 
 # 設定日誌
 logging.basicConfig(level=logging.DEBUG,
                    format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# 設定頁面
-st.set_page_config(
-    page_title="智能字幕提取系統",
-    page_icon="🎬",
-    layout="centered"
-)
+app = Flask(__name__)
+# 使用相對路徑作為基礎路徑以支援雲端部署
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
+OUTPUT_FOLDER = os.path.join(BASE_DIR, 'outputs')
+FFMPEG_PATH = 'ffmpeg'  # 在雲端環境中使用系統安裝的 ffmpeg
+TASKS_FILE = os.path.join(BASE_DIR, 'tasks.json')
 
-# 自定義 CSS
-st.markdown("""
-<style>
-    .stApp {
-        background-color: #f5f5f5;
-    }
-    
-    .main {
-        background-color: white;
-        padding: 2rem;
-        border-radius: 10px;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-    }
-    
-    h1 {
-        color: #333;
-        text-align: center;
-        margin-bottom: 30px;
-        font-size: 2.2em;
-        padding-bottom: 15px;
-        border-bottom: 4px solid #2196F3;
-    }
-    
-    .stButton > button {
-        width: 100%;
-        background-color: #cccccc;
-        color: #666666;
-        padding: 0.8rem;
-        font-size: 1.1em;
-        border: none;
-        border-radius: 4px;
-        cursor: not-allowed;
-        transition: all 0.3s ease;
-    }
-    
-    .stButton > button.active {
-        background-color: #2196F3;
-        color: white;
-        cursor: pointer;
-    }
-    
-    .stButton > button.active:hover {
-        background-color: #1976D2;
-    }
-    
-    div[data-testid="stFileUploader"] {
-        background-color: white;
-        border: 1px solid #ddd;
-        border-radius: 4px;
-        padding: 1rem;
-    }
-    
-    .stCheckbox {
-        background-color: white;
-        padding: 0.5rem;
-        margin: 0.5rem 0;
-    }
-    
-    div[data-testid="stMarkdownContainer"] {
-        color: #333;
-    }
-    
-    .status-info {
-        padding: 1rem;
-        border-radius: 4px;
-        background-color: #e3f2fd;
-        color: #0d47a1;
-        margin: 1rem 0;
-    }
-    
-    .status-error {
-        padding: 1rem;
-        border-radius: 4px;
-        background-color: #ffebee;
-        color: #c62828;
-        margin: 1rem 0;
-    }
-    
-    .status-success {
-        padding: 1rem;
-        border-radius: 4px;
-        background-color: #e8f5e9;
-        color: #2e7d32;
-        margin: 1rem 0;
-    }
-    
-    .checkbox-group {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 10px;
-        margin: 20px 0;
-        justify-content: center;
-    }
-    
-    .format-option {
-        flex: 1;
-        min-width: 150px;
-        max-width: 200px;
-    }
-</style>
-""", unsafe_allow_html=True)
+# 確保資料夾存在
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+
+# 儲存處理狀態
+processing_tasks = {}
+
+def save_tasks():
+    """將任務狀態儲存到檔案"""
+    try:
+        with open(TASKS_FILE, 'w', encoding='utf-8') as f:
+            # 只儲存已完成的任務
+            completed_tasks = {
+                task_id: task for task_id, task in processing_tasks.items()
+                if task['status'] == 'completed' and os.path.exists(task.get('zip_path', ''))
+            }
+            json.dump(completed_tasks, f, ensure_ascii=False, indent=2)
+        logger.info("任務狀態已儲存")
+    except Exception as e:
+        logger.error(f"儲存任務狀態時發生錯誤：{str(e)}")
+
+def load_tasks():
+    """從檔案載入任務狀態"""
+    global processing_tasks
+    try:
+        if os.path.exists(TASKS_FILE):
+            with open(TASKS_FILE, 'r', encoding='utf-8') as f:
+                loaded_tasks = json.load(f)
+                # 驗證每個任務的輸出檔案是否存在
+                valid_tasks = {}
+                for task_id, task in loaded_tasks.items():
+                    if os.path.exists(task.get('zip_path', '')):
+                        valid_tasks[task_id] = task
+                    else:
+                        logger.warning(f"任務 {task_id} 的輸出檔案不存在，將被忽略")
+                processing_tasks = valid_tasks
+            logger.info(f"已載入 {len(processing_tasks)} 個有效任務")
+    except Exception as e:
+        logger.error(f"載入任務狀態時發生錯誤：{str(e)}")
+        processing_tasks = {}
+
+# 程式啟動時載入任務狀態
+load_tasks()
+
+# 註冊程式結束時的處理函數
+atexit.register(save_tasks)
 
 def format_timestamp(seconds, always_include_hours=False):
     """將秒數轉換為 SRT/VTT 時間戳格式"""
@@ -200,158 +152,604 @@ def write_vtt(segments):
         output.append("")
     return "\n".join(output)
 
-def process_audio(audio_file, formats):
-    """處理音訊檔案並生成字幕"""
+FORM_HTML = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>字幕提取器</title>
+    <meta charset="UTF-8">
+    <style>
+        :root {
+            --primary-color: #2196F3;
+            --primary-dark: #1976D2;
+            --background-color: #1a1a2e;
+            --container-bg: #242444;
+            --text-color: #ffffff;
+            --border-color: #3498db;
+        }
+
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            margin: 0;
+            padding: 40px 20px;
+            background-color: var(--background-color);
+            color: var(--text-color);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .container {
+            background-color: var(--container-bg);
+            padding: 40px;
+            border-radius: 15px;
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+            backdrop-filter: blur(4px);
+            border: 1px solid var(--border-color);
+            width: 90%;
+            max-width: 800px;
+        }
+
+        h2 {
+            color: var(--text-color);
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.2em;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            position: relative;
+            padding-bottom: 15px;
+        }
+
+        h2:after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 60px;
+            height: 4px;
+            background: var(--primary-color);
+            border-radius: 2px;
+        }
+
+        .form-group {
+            margin-bottom: 30px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 10px;
+            font-size: 1.1em;
+            color: var(--text-color);
+        }
+
+        .file-input-container {
+            position: relative;
+            margin-bottom: 20px;
+        }
+
+        .file-input-label {
+            display: inline-block;
+            padding: 15px 20px;
+            background-color: rgba(36, 36, 68, 0.6);
+            color: var(--text-color);
+            border-radius: 5px;
+            cursor: pointer;
+            width: 100%;
+            text-align: center;
+            transition: all 0.3s ease;
+            border: 1px solid var(--border-color);
+            font-size: 1.5em;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .file-input-label:hover {
+            background-color: rgba(36, 36, 68, 0.8);
+            border-color: var(--primary-color);
+        }
+
+        .file-input {
+            position: absolute;
+            left: -9999px;
+        }
+
+        .format-options {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        .format-option {
+            flex: 1;
+            min-width: 100px;
+        }
+
+        .format-checkbox {
+            display: none;
+        }
+
+        .format-label {
+            display: block;
+            padding: 10px;
+            background-color: rgba(36, 36, 68, 0.6);
+            color: var(--text-color);
+            border: 1px solid var(--border-color);
+            border-radius: 5px;
+            cursor: pointer;
+            text-align: center;
+            transition: all 0.3s ease;
+        }
+
+        .format-checkbox:checked + .format-label {
+            background-color: var(--primary-color);
+            border-color: var(--primary-dark);
+        }
+
+        .format-label:hover {
+            background-color: rgba(36, 36, 68, 0.8);
+            border-color: var(--primary-color);
+        }
+
+        .submit-btn {
+            background-color: var(--primary-color);
+            color: var(--text-color);
+            border: none;
+            padding: 15px 30px;
+            border-radius: 5px;
+            cursor: pointer;
+            width: 100%;
+            font-size: 1.2em;
+            transition: all 0.3s ease;
+        }
+
+        .submit-btn:hover {
+            background-color: var(--primary-dark);
+        }
+
+        .submit-btn:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+
+        .status-container {
+            margin-top: 30px;
+            padding: 20px;
+            border-radius: 5px;
+            background-color: rgba(36, 36, 68, 0.6);
+            display: none;
+        }
+
+        .status-container.show {
+            display: block;
+        }
+
+        .status-text {
+            margin: 0;
+            color: var(--text-color);
+            text-align: center;
+            font-size: 1.1em;
+        }
+
+        .download-btn {
+            display: inline-block;
+            background-color: var(--primary-color);
+            color: var(--text-color);
+            text-decoration: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            margin-top: 15px;
+            transition: all 0.3s ease;
+        }
+
+        .download-btn:hover {
+            background-color: var(--primary-dark);
+        }
+
+        .error-text {
+            color: #ff6b6b;
+            text-align: center;
+            margin-top: 10px;
+        }
+
+        #selectedFileName {
+            margin-top: 10px;
+            text-align: center;
+            color: var(--text-color);
+            font-style: italic;
+        }
+
+        .progress-container {
+            width: 100%;
+            background-color: rgba(255, 255, 255, 0.1);
+            border-radius: 5px;
+            margin-top: 15px;
+            overflow: hidden;
+            display: none;
+        }
+
+        .progress-bar {
+            width: 0%;
+            height: 10px;
+            background-color: var(--primary-color);
+            border-radius: 5px;
+            transition: width 0.3s ease;
+        }
+
+        @media (max-width: 600px) {
+            .container {
+                padding: 20px;
+            }
+
+            .format-option {
+                min-width: calc(50% - 5px);
+            }
+        }
+    </style>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const form = document.getElementById('uploadForm');
+            const fileInput = document.getElementById('file');
+            const submitBtn = document.getElementById('submitBtn');
+            const selectedFileName = document.getElementById('selectedFileName');
+            const statusContainer = document.getElementById('statusContainer');
+            const statusText = document.getElementById('statusText');
+            const progressContainer = document.getElementById('progressContainer');
+            const progressBar = document.getElementById('progressBar');
+            const downloadBtn = document.getElementById('downloadBtn');
+            const errorText = document.getElementById('errorText');
+            let taskId = null;
+
+            fileInput.addEventListener('change', function() {
+                if (this.files.length > 0) {
+                    selectedFileName.textContent = '已選擇檔案：' + this.files[0].name;
+                    submitBtn.disabled = false;
+                } else {
+                    selectedFileName.textContent = '';
+                    submitBtn.disabled = true;
+                }
+            });
+
+            form.addEventListener('submit', async function(e) {
+                e.preventDefault();
+                
+                const formData = new FormData(form);
+                const formats = Array.from(document.querySelectorAll('input[name="formats"]:checked')).map(cb => cb.value);
+                
+                if (formats.length === 0) {
+                    alert('請至少選擇一種輸出格式！');
+                    return;
+                }
+                
+                formData.delete('formats');
+                formats.forEach(format => formData.append('formats', format));
+
+                submitBtn.disabled = true;
+                statusContainer.style.display = 'block';
+                progressContainer.style.display = 'block';
+                statusText.textContent = '正在上傳檔案...';
+                errorText.textContent = '';
+                progressBar.style.width = '0%';
+
+                try {
+                    const response = await fetch('/process', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (response.ok) {
+                        taskId = data.task_id;
+                        checkStatus();
+                    } else {
+                        throw new Error(data.error || '上傳失敗');
+                    }
+                } catch (error) {
+                    statusText.textContent = '處理失敗';
+                    errorText.textContent = error.message;
+                    submitBtn.disabled = false;
+                    progressContainer.style.display = 'none';
+                }
+            });
+
+            async function checkStatus() {
+                if (!taskId) return;
+
+                try {
+                    const response = await fetch(`/status/${taskId}`);
+                    const data = await response.json();
+
+                    if (data.status === 'processing') {
+                        statusText.textContent = '正在處理檔案...';
+                        progressBar.style.width = '50%';
+                        setTimeout(checkStatus, 2000);
+                    } else if (data.status === 'completed') {
+                        statusText.textContent = '處理完成！';
+                        progressBar.style.width = '100%';
+                        downloadBtn.href = `/download/${taskId}`;
+                        downloadBtn.style.display = 'inline-block';
+                        submitBtn.disabled = false;
+                    } else if (data.status === 'failed') {
+                        throw new Error(data.error || '處理失敗');
+                    }
+                } catch (error) {
+                    statusText.textContent = '處理失敗';
+                    errorText.textContent = error.message;
+                    submitBtn.disabled = false;
+                    progressContainer.style.display = 'none';
+                }
+            }
+        });
+    </script>
+</head>
+<body>
+    <div class="container">
+        <h2>字幕提取器</h2>
+        <form id="uploadForm">
+            <div class="form-group">
+                <div class="file-input-container">
+                    <label for="file" class="file-input-label">
+                        點擊選擇影音檔案
+                    </label>
+                    <input type="file" id="file" name="file" class="file-input" accept="audio/*,video/*" required>
+                </div>
+                <div id="selectedFileName"></div>
+            </div>
+
+            <div class="form-group">
+                <label>選擇輸出格式：</label>
+                <div class="format-options">
+                    <div class="format-option">
+                        <input type="checkbox" id="txt" name="formats" value="txt" class="format-checkbox" checked>
+                        <label for="txt" class="format-label">TXT</label>
+                    </div>
+                    <div class="format-option">
+                        <input type="checkbox" id="srt" name="formats" value="srt" class="format-checkbox" checked>
+                        <label for="srt" class="format-label">SRT</label>
+                    </div>
+                    <div class="format-option">
+                        <input type="checkbox" id="vtt" name="formats" value="vtt" class="format-checkbox">
+                        <label for="vtt" class="format-label">VTT</label>
+                    </div>
+                    <div class="format-option">
+                        <input type="checkbox" id="tsv" name="formats" value="tsv" class="format-checkbox">
+                        <label for="tsv" class="format-label">TSV</label>
+                    </div>
+                    <div class="format-option">
+                        <input type="checkbox" id="json" name="formats" value="json" class="format-checkbox">
+                        <label for="json" class="format-label">JSON</label>
+                    </div>
+                </div>
+            </div>
+
+            <button type="submit" id="submitBtn" class="submit-btn" disabled>開始處理</button>
+
+            <div id="statusContainer" class="status-container">
+                <p id="statusText" class="status-text">準備開始處理...</p>
+                <div id="progressContainer" class="progress-container">
+                    <div id="progressBar" class="progress-bar"></div>
+                </div>
+                <p id="errorText" class="error-text"></p>
+                <div style="text-align: center;">
+                    <a id="downloadBtn" class="download-btn" style="display: none;">下載字幕檔案</a>
+                </div>
+            </div>
+        </form>
+    </div>
+</body>
+</html>
+"""
+
+def check_ffmpeg():
+    """檢查 ffmpeg 是否可用"""
     try:
-        # 載入模型（如果尚未載入）
-        if 'model' not in st.session_state:
-            with st.spinner('正在載入 Whisper 模型...'):
-                st.session_state.model = whisper.load_model("base")
+        subprocess.run([FFMPEG_PATH, '-version'], capture_output=True, check=True)
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+def process_file(task_id, file_path, formats):
+    """處理檔案並生成字幕"""
+    try:
+        # 建立輸出目錄
+        task_output_dir = os.path.join(OUTPUT_FOLDER, task_id)
+        os.makedirs(task_output_dir, exist_ok=True)
+
+        # 載入 Whisper 模型
+        model = whisper.load_model("base")
         
-        # 建立臨時檔案
-        with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as temp_audio:
-            temp_audio.write(audio_file.getvalue())
-            temp_audio_path = temp_audio.name
-
         # 使用 Whisper 處理
-        with st.spinner('正在提取字幕...'):
-            result = st.session_state.model.transcribe(temp_audio_path, verbose=False)
-
+        result = model.transcribe(file_path)
+        
         # 生成不同格式的輸出
         outputs = {}
         processed_segments = merge_short_segments(result['segments'])
         
         if 'txt' in formats:
-            outputs['txt'] = '\n'.join(clean_text(segment['text']) for segment in processed_segments)
+            txt_path = os.path.join(task_output_dir, 'subtitle.txt')
+            with open(txt_path, 'w', encoding='utf-8') as f:
+                f.write('\n'.join(clean_text(segment['text']) for segment in processed_segments))
+            outputs['txt'] = txt_path
         
         if 'srt' in formats:
-            outputs['srt'] = write_srt(result['segments'])
+            srt_path = os.path.join(task_output_dir, 'subtitle.srt')
+            with open(srt_path, 'w', encoding='utf-8') as f:
+                f.write(write_srt(result['segments']))
+            outputs['srt'] = srt_path
             
         if 'vtt' in formats:
-            outputs['vtt'] = write_vtt(result['segments'])
+            vtt_path = os.path.join(task_output_dir, 'subtitle.vtt')
+            with open(vtt_path, 'w', encoding='utf-8') as f:
+                f.write(write_vtt(result['segments']))
+            outputs['vtt'] = vtt_path
             
         if 'tsv' in formats:
-            outputs['tsv'] = '開始時間\t結束時間\t文字內容\n' + '\n'.join(
-                f"{format_timestamp(seg['start'])}\t{format_timestamp(seg['end'])}\t{clean_text(seg['text'])}"
-                for seg in processed_segments
-            )
+            tsv_path = os.path.join(task_output_dir, 'subtitle.tsv')
+            with open(tsv_path, 'w', encoding='utf-8') as f:
+                f.write('開始時間\t結束時間\t文字內容\n')
+                f.write('\n'.join(
+                    f"{format_timestamp(seg['start'])}\t{format_timestamp(seg['end'])}\t{clean_text(seg['text'])}"
+                    for seg in processed_segments
+                ))
+            outputs['tsv'] = tsv_path
             
         if 'json' in formats:
-            clean_result = {
-                'text': '\n'.join(clean_text(segment['text']) for segment in processed_segments),
-                'segments': [{
-                    'start': segment['start'],
-                    'end': segment['end'],
-                    'text': clean_text(segment['text'])
-                } for segment in processed_segments]
-            }
-            outputs['json'] = json.dumps(clean_result, ensure_ascii=False, indent=2)
+            json_path = os.path.join(task_output_dir, 'subtitle.json')
+            with open(json_path, 'w', encoding='utf-8') as f:
+                clean_result = {
+                    'text': '\n'.join(clean_text(segment['text']) for segment in processed_segments),
+                    'segments': [{
+                        'start': segment['start'],
+                        'end': segment['end'],
+                        'text': clean_text(segment['text'])
+                    } for segment in processed_segments]
+                }
+                json.dump(clean_result, f, ensure_ascii=False, indent=2)
+            outputs['json'] = json_path
+        
+        # 建立 ZIP 檔案
+        zip_path = os.path.join(OUTPUT_FOLDER, f'{task_id}.zip')
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for fmt, path in outputs.items():
+                zipf.write(path, os.path.basename(path))
+        
+        # 更新任務狀態
+        processing_tasks[task_id]['status'] = 'completed'
+        processing_tasks[task_id]['zip_path'] = zip_path
         
         # 清理臨時檔案
-        os.unlink(temp_audio_path)
-        
-        return outputs
+        shutil.rmtree(task_output_dir)
         
     except Exception as e:
-        logger.error(f"處理失敗：{str(e)}")
-        raise
+        logger.error(f"處理檔案時發生錯誤：{str(e)}")
+        logger.error(traceback.format_exc())
+        processing_tasks[task_id]['status'] = 'failed'
+        processing_tasks[task_id]['error'] = str(e)
+        
+        # 清理臨時檔案
+        if os.path.exists(task_output_dir):
+            shutil.rmtree(task_output_dir)
 
-def create_zip_file(outputs, filename_prefix):
-    """將所有輸出打包成ZIP檔案"""
-    memory_file = io.BytesIO()
-    with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
-        for fmt, content in outputs.items():
-            output_filename = f"{filename_prefix}.{fmt}"
-            zf.writestr(output_filename, content)
-    memory_file.seek(0)
-    return memory_file
+@app.route('/')
+def index():
+    return render_template_string(FORM_HTML)
 
-def main():
-    st.title("智能字幕提取系統")
+@app.route('/process', methods=['POST'])
+def process():
+    if 'file' not in request.files:
+        return jsonify({'error': '未選擇檔案'}), 400
     
-    # 初始化 session state
-    if 'processed' not in st.session_state:
-        st.session_state.processed = False
-        st.session_state.outputs = None
-        st.session_state.filename = None
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': '未選擇檔案'}), 400
     
-    # 檔案上傳
-    uploaded_file = st.file_uploader(
-        "選擇影音檔",
-        type=['mp3', 'wav', 'mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm'],
-        help="支援多種影音格式，包括 MP3、WAV、MP4、MKV 等"
-    )
+    formats = request.form.getlist('formats')
+    if not formats:
+        return jsonify({'error': '未選擇輸出格式'}), 400
     
-    # 格式選擇
-    st.write("選擇輸出格式：")
+    # 檢查 ffmpeg 是否可用
+    if not check_ffmpeg():
+        return jsonify({'error': '找不到 ffmpeg，請確保已正確安裝'}), 500
     
-    col1, col2, col3, col4, col5 = st.columns(5)
-    with col1:
-        txt_format = st.checkbox('純文字 (.txt)', value=True)
-    with col2:
-        srt_format = st.checkbox('字幕檔 (.srt)', value=True)
-    with col3:
-        vtt_format = st.checkbox('網頁字幕 (.vtt)')
-    with col4:
-        tsv_format = st.checkbox('Excel格式 (.tsv)')
-    with col5:
-        json_format = st.checkbox('JSON格式')
+    try:
+        # 生成唯一的任務 ID
+        task_id = str(uuid.uuid4())
+        
+        # 儲存上傳的檔案
+        filename = secure_filename(file.filename)
+        file_path = os.path.join(UPLOAD_FOLDER, f'{task_id}_{filename}')
+        file.save(file_path)
+        
+        # 初始化任務狀態
+        processing_tasks[task_id] = {
+            'status': 'processing',
+            'file_path': file_path,
+            'formats': formats
+        }
+        
+        # 在背景執行處理
+        thread = threading.Thread(target=process_file, args=(task_id, file_path, formats))
+        thread.start()
+        
+        return jsonify({'task_id': task_id})
+        
+    except Exception as e:
+        logger.error(f"處理上傳檔案時發生錯誤：{str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/status/<task_id>')
+def status(task_id):
+    if task_id not in processing_tasks:
+        return jsonify({'error': '找不到指定的任務'}), 404
     
-    formats = []
-    if txt_format:
-        formats.append('txt')
-    if srt_format:
-        formats.append('srt')
-    if vtt_format:
-        formats.append('vtt')
-    if tsv_format:
-        formats.append('tsv')
-    if json_format:
-        formats.append('json')
+    task = processing_tasks[task_id]
+    response = {'status': task['status']}
     
-    # 處理按鈕
-    process_btn = st.empty()
-    download_btn = st.empty()
+    if task['status'] == 'failed':
+        response['error'] = task.get('error', '未知錯誤')
     
-    # 根據狀態設定按鈕樣式
-    process_btn_disabled = not (uploaded_file and formats)
-    process_btn_class = "" if process_btn_disabled else "active"
+    return jsonify(response)
+
+@app.route('/download/<task_id>')
+def download(task_id):
+    if task_id not in processing_tasks:
+        return jsonify({'error': '找不到指定的任務'}), 404
     
-    if process_btn.button('開始提取', disabled=process_btn_disabled, key='process_btn'):
-        try:
-            with st.spinner('正在處理中...'):
-                # 處理檔案
-                outputs = process_audio(uploaded_file, formats)
-                st.session_state.outputs = outputs
-                st.session_state.filename = os.path.splitext(uploaded_file.name)[0]
-                st.session_state.processed = True
-            
-            # 顯示成功訊息
-            st.success('處理完成！請點擊下方按鈕下載字幕檔')
-            
-        except Exception as e:
-            st.error(f'處理失敗：{str(e)}')
-            logger.error(f"處理失敗：{str(e)}")
-            st.session_state.processed = False
+    task = processing_tasks[task_id]
+    if task['status'] != 'completed':
+        return jsonify({'error': '任務尚未完成'}), 400
     
-    # 下載按鈕
-    if st.session_state.processed and st.session_state.outputs:
-        zip_file = create_zip_file(st.session_state.outputs, st.session_state.filename)
-        download_btn.download_button(
-            label='下載字幕檔',
-            data=zip_file,
-            file_name=f"{st.session_state.filename}_subtitles.zip",
-            mime='application/zip',
-            key='download_btn'
+    if not os.path.exists(task['zip_path']):
+        return jsonify({'error': '找不到輸出檔案'}), 404
+    
+    try:
+        return send_file(
+            task['zip_path'],
+            as_attachment=True,
+            download_name='subtitles.zip'
         )
-    else:
-        download_btn.button('下載字幕檔', disabled=True, key='download_btn')
-    
-    # 顯示說明
-    if uploaded_file is None:
-        st.info('請選擇要處理的影音檔案')
-    elif not formats:
-        st.warning('請至少選擇一種輸出格式')
+    except Exception as e:
+        logger.error(f"下載檔案時發生錯誤：{str(e)}")
+        logger.error(traceback.format_exc())
+        return jsonify({'error': str(e)}), 500
+
+def is_port_in_use(port):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex(('localhost', port)) == 0
+
+def find_available_port(start_port=5000, max_attempts=100):
+    port = start_port
+    while is_port_in_use(port) and max_attempts > 0:
+        port += 1
+        max_attempts -= 1
+    return port if not is_port_in_use(port) else None
 
 if __name__ == '__main__':
-    main()
+    # 清理舊的暫存檔案
+    if os.path.exists(UPLOAD_FOLDER):
+        shutil.rmtree(UPLOAD_FOLDER)
+    if os.path.exists(OUTPUT_FOLDER):
+        shutil.rmtree(OUTPUT_FOLDER)
+    
+    # 重新建立資料夾
+    os.makedirs(UPLOAD_FOLDER)
+    os.makedirs(OUTPUT_FOLDER)
+    
+    # 尋找可用的 port
+    port = find_available_port()
+    if port is None:
+        print("無法找到可用的 port")
+        sys.exit(1)
+    
+    # 在瀏覽器中開啟應用程式
+    url = f'http://localhost:{port}'
+    webbrowser.open(url)
+    
+    # 啟動應用程式
+    app.run(port=port, debug=True)
