@@ -10,11 +10,36 @@ import zipfile
 import io
 import shutil
 from datetime import datetime
+import torch
+import whisper
+
+# 確保臨時目錄存在
+TEMP_DIR = os.path.join(tempfile.gettempdir(), 'whisper_subtitle_tool')
+os.makedirs(TEMP_DIR, exist_ok=True)
 
 # 設定日誌
-logging.basicConfig(level=logging.INFO,
-                   format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler(os.path.join(TEMP_DIR, 'app.log'))
+    ]
+)
 logger = logging.getLogger(__name__)
+
+# 初始化全局變量
+if 'model' not in st.session_state:
+    try:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        if device == "cpu":
+            logger.info("使用 CPU 進行推論")
+        st.session_state.model = whisper.load_model("base").to(device)
+        logger.info("模型載入成功")
+    except Exception as e:
+        logger.error(f"模型載入失敗：{str(e)}")
+        st.error(f"模型載入失敗：{str(e)}")
+        st.session_state.model = None
 
 # 設定頁面
 st.set_page_config(
@@ -26,51 +51,187 @@ st.set_page_config(
 # 自定義 CSS
 st.markdown("""
 <style>
+    /* 基礎顏色變量 */
+    :root {
+        --primary-color: #4A90E2;
+        --background-color: #1E1E1E;
+        --text-color: #FFFFFF;
+        --upload-bg: rgba(74, 144, 226, 0.1);
+        --upload-border: #4A90E2;
+    }
+
     .stApp {
-        background-color: #1E1E1E;
+        background-color: var(--background-color);
     }
 
     .main {
-        color: #FFFFFF;
+        color: var(--text-color);
     }
 
     /* 標題樣式 */
     h1 {
-        color: #FFFFFF !important;
+        color: var(--text-color) !important;
         text-align: center;
         padding: 20px 0;
     }
 
     /* 上傳區域樣式 */
     .stFileUploader {
-        background-color: rgba(255, 255, 255, 0.1);
-        border: 2px dashed #4A90E2;
-        border-radius: 10px;
-        padding: 20px;
-        margin: 20px 0;
+        background-color: rgba(52, 73, 94, 0.7) !important;
+        border: 2px dashed var(--upload-border) !important;
+        border-radius: 10px !important;
+        padding: 20px !important;
+        margin: 20px 0 !important;
     }
 
-    /* 確保上傳區域內的所有文字都是白色 */
-    .stFileUploader > div {
+    /* 上傳區域內的所有文字 */
+    .stFileUploader > div,
+    .stFileUploader p,
+    .stFileUploader span,
+    .stFileUploader small,
+    .stFileUploader label,
+    .stFileUploader [data-testid="stFileUploadDropzone"] > div,
+    .stFileUploader [data-testid="stFileUploadDropzone"] p,
+    .stFileUploader [data-testid="stFileUploadDropzone"] span {
         color: #FFFFFF !important;
+        font-weight: 500 !important;
+        text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3) !important;
     }
 
-    .stFileUploader p {
+    /* 上傳區域的拖放區域 */
+    .stFileUploader [data-testid="stFileUploadDropzone"] {
+        background-color: rgba(52, 73, 94, 0.9) !important;
         color: #FFFFFF !important;
-    }
-
-    .stFileUploader span {
-        color: #FFFFFF !important;
-    }
-
-    .stFileUploader small {
-        color: #FFFFFF !important;
+        padding: 20px !important;
+        border-radius: 5px !important;
+        border: 2px dashed rgba(74, 144, 226, 0.5) !important;
     }
 
     /* 上傳按鈕樣式 */
     .stFileUploader button {
         background-color: #4A90E2 !important;
         color: white !important;
+        border: none !important;
+        padding: 8px 16px !important;
+        border-radius: 4px !important;
+        cursor: pointer !important;
+        transition: all 0.3s ease !important;
+        font-weight: 500 !important;
+        text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.2) !important;
+    }
+
+    .stFileUploader button:hover {
+        background-color: #357ABD !important;
+        transform: translateY(-2px) !important;
+    }
+
+    /* 上傳文件名稱樣式 */
+    .stFileUploader [data-testid="stMarkdownContainer"] p {
+        color: #FFFFFF !important;
+        font-weight: 500 !important;
+        background-color: rgba(74, 144, 226, 0.2) !important;
+        padding: 8px 12px !important;
+        border-radius: 4px !important;
+        margin: 8px 0 !important;
+    }
+
+    /* Browse files 按鈕樣式 */
+    .stFileUploader [data-testid="stFileUploadDropzone"] button {
+        background-color: #4A90E2 !important;
+        color: white !important;
+        border: none !important;
+        padding: 8px 20px !important;
+        font-size: 1em !important;
+        font-weight: 500 !important;
+        border-radius: 4px !important;
+        cursor: pointer !important;
+        transition: all 0.3s ease !important;
+        text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.2) !important;
+        margin: 10px 0 !important;
+    }
+
+    .stFileUploader [data-testid="stFileUploadDropzone"] button:hover {
+        background-color: #357ABD !important;
+        transform: translateY(-2px) !important;
+    }
+
+    /* 標題文字樣式 */
+    .section-title {
+        color: var(--text-color) !important;
+        font-size: 1.2em;
+        margin: 20px 0 10px 0;
+        font-weight: 500;
+        text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.2);
+    }
+
+    /* 上傳說明文字樣式 */
+    .upload-text {
+        color: var(--text-color) !important;
+        background-color: rgba(74, 144, 226, 0.1);
+        padding: 10px;
+        border-radius: 5px;
+        margin: 10px 0;
+    }
+
+    /* 按鈕樣式統一 */
+    .stButton > button,
+    .stDownloadButton > button {
+        width: 100% !important;
+        height: 46px !important;
+        margin: 10px 0 !important;
+        background-color: rgba(36, 36, 68, 0.6) !important;
+        color: rgba(255, 255, 255, 0.3) !important;
+        border: 1px solid #4A90E2 !important;
+        border-radius: 5px !important;
+        font-size: 16px !important;
+        font-weight: 500 !important;
+        cursor: not-allowed !important;
+        transition: all 0.3s ease !important;
+    }
+
+    .stButton > button:disabled,
+    .stDownloadButton > button:disabled {
+        background-color: rgba(36, 36, 68, 0.6) !important;
+        color: rgba(255, 255, 255, 0.3) !important;
+        border-color: rgba(74, 144, 226, 0.3) !important;
+        cursor: not-allowed !important;
+    }
+
+    .stButton > button:not(:disabled),
+    .stDownloadButton > button:not(:disabled) {
+        background-color: #4A90E2 !important;
+        color: white !important;
+        border-color: #4A90E2 !important;
+        cursor: pointer !important;
+    }
+
+    .stButton > button:not(:disabled):hover,
+    .stDownloadButton > button:not(:disabled):hover {
+        background-color: #357ABD !important;
+        border-color: #357ABD !important;
+        transform: translateY(-2px) !important;
+    }
+
+    /* 狀態訊息樣式 */
+    .status-message {
+        margin: 10px 0;
+        padding: 15px;
+        border-radius: 5px;
+        text-align: center;
+        font-weight: 500;
+        font-size: 1.1em;
+        letter-spacing: 0.5px;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+        filter: brightness(1.5);
+    }
+
+    /* Checkbox 樣式 */
+    .stCheckbox {
+        color: var(--text-color) !important;
+    }
+
+    .stCheckbox label {
+        color: var(--text-color) !important;
     }
 
     /* 標題文字樣式 */
@@ -82,15 +243,6 @@ st.markdown("""
         text-align: left !important;
         line-height: 1.4 !important;
         padding: 2px 0 !important;
-    }
-
-    /* Checkbox 樣式 */
-    .stCheckbox {
-        color: #FFFFFF !important;
-    }
-
-    .stCheckbox label {
-        color: #FFFFFF !important;
     }
 
     /* 按鈕容器樣式 */
@@ -105,69 +257,6 @@ st.markdown("""
     div.row-widget.stDownloadButton {
         margin: 0 !important;
         padding: 0 !important;
-    }
-
-    /* 按鈕樣式 */
-    .stButton > button {
-        width: 100% !important;
-        height: 46px !important;
-        margin: 10px 0 !important;
-        background-color: rgba(36, 36, 68, 0.6) !important;
-        color: rgba(255, 255, 255, 0.3) !important;
-        border: 1px solid #4A90E2 !important;
-        border-radius: 5px !important;
-        font-size: 16px !important;
-        font-weight: 500 !important;
-        cursor: not-allowed !important;
-        transition: all 0.3s ease !important;
-    }
-
-    .stButton > button:disabled {
-        background-color: rgba(36, 36, 68, 0.6) !important;
-        color: rgba(255, 255, 255, 0.3) !important;
-        border-color: rgba(74, 144, 226, 0.3) !important;
-        cursor: not-allowed !important;
-    }
-
-    .stButton > button:not(:disabled) {
-        background-color: #4A90E2 !important;
-        color: white !important;
-        border-color: #4A90E2 !important;
-        cursor: pointer !important;
-    }
-
-    .stButton > button:not(:disabled):hover {
-        background-color: #357ABD !important;
-        border-color: #357ABD !important;
-        transform: translateY(-2px) !important;
-    }
-
-    /* 下載按鈕特殊樣式 */
-    .stDownloadButton button {
-        width: 100% !important;
-        height: 46px !important;
-        margin: 10px 0 !important;
-        background-color: #4A90E2 !important;
-        color: white !important;
-        border: 1px solid #4A90E2 !important;
-        border-radius: 5px !important;
-        font-size: 16px !important;
-        font-weight: 500 !important;
-        cursor: pointer !important;
-        transition: all 0.3s ease !important;
-    }
-
-    .stDownloadButton button:disabled {
-        background-color: rgba(36, 36, 68, 0.6) !important;
-        color: rgba(255, 255, 255, 0.3) !important;
-        border-color: rgba(74, 144, 226, 0.3) !important;
-        cursor: not-allowed !important;
-    }
-
-    .stDownloadButton button:not(:disabled):hover {
-        background-color: #357ABD !important;
-        border-color: #357ABD !important;
-        transform: translateY(-2px) !important;
     }
 
     /* 按鈕行容器 */
@@ -306,34 +395,78 @@ st.markdown("""
         margin: 20px 0 !important;
         text-align: center !important;
         min-height: 60px !important;
+        height: 60px !important;
         width: 100% !important;
         max-width: 800px !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        position: fixed !important;
+        bottom: 20px !important;
+        left: 50% !important;
+        transform: translateX(-50%) !important;
+        z-index: 1000 !important;
     }
 
-    /* 訊息區域樣式 */
-    #status-area {
-        margin: 20px 0 !important;
-        padding: 20px !important;
-        border-radius: 10px !important;
-        background-color: rgba(36, 36, 68, 0.4) !important;
-        min-height: 60px !important;
+    /* 提示訊息文字樣式 */
+    div.stAlert > div {
+        color: white !important;
+        font-size: 1.1em !important;
+        font-weight: 500 !important;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2) !important;
+        opacity: 1 !important;
+        filter: brightness(2) !important;
+    }
+
+    /* 成功訊息樣式 */
+    div.stAlert.success {
+        background-color: rgba(46, 204, 113, 0.2) !important;
+        border-color: #2ecc71 !important;
+    }
+
+    div.stAlert.success div {
+        color: #7bed9f !important;
+        filter: brightness(2) !important;
+    }
+
+    /* 錯誤訊息樣式 */
+    div.stAlert.error {
+        background-color: rgba(231, 76, 60, 0.2) !important;
+        border-color: #e74c3c !important;
+    }
+
+    div.stAlert.error div {
+        color: #ff7675 !important;
+        filter: brightness(2) !important;
+    }
+
+    /* 資訊訊息樣式 */
+    div.stAlert.info {
+        background-color: rgba(52, 152, 219, 0.2) !important;
+        border-color: #3498db !important;
+    }
+
+    div.stAlert.info div {
+        color: #5dade2 !important;
+        filter: brightness(2) !important;
+    }
+
+    /* 確保按鈕容器和提示訊息容器寬度一致 */
+    div.row-widget.stButton,
+    div.row-widget.stDownloadButton,
+    div.element-container div.stAlert {
         width: 100% !important;
         max-width: 800px !important;
-        border: 1px solid #4A90E2 !important;
-        box-sizing: border-box !important;
+        margin-left: auto !important;
+        margin-right: auto !important;
     }
 
-    .status-message {
-        margin: 10px 0;
-        padding: 15px;
-        border-radius: 5px;
-        text-align: center;
-        font-weight: 500;
-        font-size: 1.1em;
-        letter-spacing: 0.5px;
-        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+    /* 為提示訊息預留空間 */
+    .main .block-container {
+        padding-bottom: 100px !important;
     }
 
+    /* 狀態訊息樣式 */
     .status-info {
         background-color: rgba(52, 152, 219, 0.2);
         color: #5dade2;
@@ -368,13 +501,6 @@ st.markdown("""
     /* 隱藏 Streamlit 的 spinner */
     .stSpinner {
         display: none !important;
-    }
-
-    /* 確保所有容器寬度一致 */
-    .main .block-container {
-        max-width: 800px !important;
-        padding: 0 !important;
-        margin: 0 auto !important;
     }
 
     /* 隱藏 Streamlit 預設的漢堡選單和頁尾 */
@@ -486,65 +612,78 @@ def check_ffmpeg():
 
 def process_audio(audio_file, formats):
     """處理音訊檔案並生成字幕"""
+    temp_audio_path = None
     try:
-        # 載入必要的套件
-        import whisper
-        import torch
-        
-        # 建立臨時檔案
-        with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as temp_audio:
-            try:
-                temp_audio.write(audio_file.getvalue())
-                temp_audio_path = temp_audio.name
-                
-                # 使用 Whisper 處理
-                model = whisper.load_model("base")
-                with torch.inference_mode():
-                    result = model.transcribe(temp_audio_path, verbose=False)
-                
-                # 生成不同格式的輸出
-                outputs = {}
-                processed_segments = merge_short_segments(result['segments'])
-                
-                if 'txt' in formats:
-                    outputs['txt'] = '\n'.join(clean_text(segment['text']) for segment in processed_segments)
-                
-                if 'srt' in formats:
-                    outputs['srt'] = write_srt(result['segments'])
-                    
-                if 'vtt' in formats:
-                    outputs['vtt'] = write_vtt(result['segments'])
-                    
-                if 'tsv' in formats:
-                    outputs['tsv'] = '開始時間\t結束時間\t文字內容\n' + '\n'.join(
-                        f"{format_timestamp(seg['start'])}\t{format_timestamp(seg['end'])}\t{clean_text(seg['text'])}"
-                        for seg in processed_segments
-                    )
-                    
-                if 'json' in formats:
-                    clean_result = {
-                        'text': '\n'.join(clean_text(segment['text']) for segment in processed_segments),
-                        'segments': [{
-                            'start': segment['start'],
-                            'end': segment['end'],
-                            'text': clean_text(segment['text'])
-                        } for segment in processed_segments]
-                    }
-                    outputs['json'] = json.dumps(clean_result, ensure_ascii=False, indent=2)
-                
-                return outputs
-                
-            except Exception as e:
-                logger.error(f"處理失敗：{str(e)}")
-                raise
-            finally:
+        with st.spinner('正在處理音訊...'):
+            # 生成唯一的臨時文件名
+            temp_file_name = f'temp_audio_{uuid.uuid4()}.mp3'
+            temp_audio_path = os.path.join(TEMP_DIR, temp_file_name)
+            
+            logger.info(f"開始處理音訊文件，臨時文件路徑：{temp_audio_path}")
+            
+            # 寫入臨時文件
+            with open(temp_audio_path, 'wb') as f:
+                f.write(audio_file.getvalue())
+            
+            if st.session_state.model is None:
+                raise Exception("模型未正確載入")
+            
+            # 使用 with torch.inference_mode() 進行推論
+            with torch.inference_mode():
                 try:
-                    os.unlink(temp_audio_path)
-                except:
-                    pass
+                    result = st.session_state.model.transcribe(
+                        temp_audio_path,
+                        verbose=False,
+                        fp16=False  # 強制使用 FP32
+                    )
+                    logger.info("音訊處理完成")
+                except Exception as e:
+                    logger.error(f"轉錄失敗：{str(e)}")
+                    raise Exception(f"轉錄失敗：{str(e)}")
+            
+            outputs = {}
+            processed_segments = merge_short_segments(result['segments'])
+            
+            for fmt in formats:
+                try:
+                    if fmt == 'txt':
+                        outputs['txt'] = '\n'.join(clean_text(segment['text']) for segment in processed_segments)
+                    elif fmt == 'srt':
+                        outputs['srt'] = write_srt(result['segments'])
+                    elif fmt == 'vtt':
+                        outputs['vtt'] = write_vtt(result['segments'])
+                    elif fmt == 'tsv':
+                        outputs['tsv'] = '開始時間\t結束時間\t文字內容\n' + '\n'.join(
+                            f"{format_timestamp(seg['start'])}\t{format_timestamp(seg['end'])}\t{clean_text(seg['text'])}"
+                            for seg in processed_segments
+                        )
+                    elif fmt == 'json':
+                        clean_result = {
+                            'text': '\n'.join(clean_text(segment['text']) for segment in processed_segments),
+                            'segments': [{
+                                'start': segment['start'],
+                                'end': segment['end'],
+                                'text': clean_text(segment['text'])
+                            } for segment in processed_segments]
+                        }
+                        outputs['json'] = json.dumps(clean_result, ensure_ascii=False, indent=2)
+                    logger.info(f"格式 {fmt} 處理完成")
+                except Exception as e:
+                    logger.error(f"格式 {fmt} 處理失敗：{str(e)}")
+                    continue
+            
+            return outputs
     except Exception as e:
         logger.error(f"處理失敗：{str(e)}")
         raise
+    finally:
+        # 清理臨時文件
+        if temp_audio_path and os.path.exists(temp_audio_path):
+            try:
+                os.remove(temp_audio_path)
+                logger.info("臨時文件已清理")
+            except Exception as e:
+                logger.error(f"清理臨時文件失敗：{str(e)}")
 
 def create_zip_file(outputs, filename_prefix):
     """將所有輸出打包成ZIP檔案"""
@@ -562,6 +701,8 @@ def main():
         
         # 檔案上傳
         st.markdown('<div class="section-title">選擇影音檔：</div>', unsafe_allow_html=True)
+        st.markdown('<div class="upload-text">支援多種影音格式，包括 MP3、WAV、MP4、MKV 等</div>', unsafe_allow_html=True)
+        
         uploaded_file = st.file_uploader(
             "上傳檔案",
             type=['mp3', 'wav', 'mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm'],
@@ -574,9 +715,9 @@ def main():
         
         col1, col2, col3, col4, col5 = st.columns(5)
         with col1:
-            txt_format = st.checkbox('純文字  \n(.txt)', value=True)
+            txt_format = st.checkbox('純文字\n(.txt)', value=True)
         with col2:
-            srt_format = st.checkbox('字幕檔  \n(.srt)', value=True)
+            srt_format = st.checkbox('字幕檔\n(.srt)', value=True)
         with col3:
             vtt_format = st.checkbox('網頁字幕\n(.vtt)', value=True)
         with col4:
@@ -596,71 +737,47 @@ def main():
         if json_format:
             formats.append('json')
         
-        # 使用自定義的按鈕容器
-        st.markdown('<div class="button-container">', unsafe_allow_html=True)
         col1, col2 = st.columns(2)
         
         with col1:
-            process_btn_disabled = not (uploaded_file and formats) or st.session_state.processing
-            process_btn_class = "" if process_btn_disabled else "active"
-            if st.button('開始提取', disabled=process_btn_disabled, key='process_btn'):
+            if st.button('開始提取', disabled=not (uploaded_file and formats) or st.session_state.get('processing', False)):
                 try:
                     st.session_state.processing = True
                     st.session_state.downloaded = False
-                    st.session_state.status_message = "字幕提取中..."
-                    st.session_state.status_type = "info"
                     
-                    outputs = process_audio(uploaded_file, formats)
-                    st.session_state.outputs = outputs
-                    st.session_state.filename = os.path.splitext(uploaded_file.name)[0]
-                    st.session_state.processed = True
-                    st.session_state.processing = False
-                    st.session_state.status_message = "處理完成！請點擊右側按鈕下載字幕檔"
-                    st.session_state.status_type = "success"
+                    with st.spinner('正在提取字幕...'):
+                        outputs = process_audio(uploaded_file, formats)
+                        st.session_state.outputs = outputs
+                        st.session_state.filename = os.path.splitext(uploaded_file.name)[0]
+                        st.session_state.processed = True
+                        st.success('處理完成！請點擊右側按鈕下載字幕檔')
                 except Exception as e:
-                    st.session_state.processing = False
-                    st.session_state.status_message = f"處理失敗：{str(e)}"
-                    st.session_state.status_type = "error"
+                    st.error(f'處理失敗：{str(e)}')
                     logger.error(f"處理失敗：{str(e)}")
-                    st.session_state.processed = False
+                finally:
+                    st.session_state.processing = False
         
         with col2:
-            download_btn_disabled = not st.session_state.processed or st.session_state.downloaded
-            if st.session_state.outputs and not st.session_state.downloaded:
+            if st.session_state.get('outputs') and not st.session_state.get('downloaded', False):
                 zip_file = create_zip_file(st.session_state.outputs, st.session_state.filename)
                 if st.download_button(
                     label='下載字幕檔',
                     data=zip_file,
                     file_name=f"{st.session_state.filename}_subtitles.zip",
-                    mime='application/zip',
-                    disabled=download_btn_disabled,
-                    key='download_btn'
+                    mime='application/zip'
                 ):
                     st.session_state.downloaded = True
-                    st.session_state.status_message = "下載完成！可以繼續處理新的檔案"
-                    st.session_state.status_type = "success"
-                    st.rerun()
+                    st.success('下載完成！可以繼續處理新的檔案')
             else:
-                st.button('下載字幕檔', disabled=True, key='download_btn_disabled')
-        
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        # 更新狀態訊息
-        if not uploaded_file:
-            st.session_state.status_message = "請選擇要處理的影音檔案"
-            st.session_state.status_type = "info"
-        elif not formats:
-            st.session_state.status_message = "請至少選擇一種輸出格式"
-            st.session_state.status_type = "warning"
-        
-        # 顯示狀態訊息
-        st.markdown(
-            f'<div id="status-area"><div class="status-message status-{st.session_state.status_type}">{st.session_state.status_message}</div></div>',
-            unsafe_allow_html=True
-        )
+                st.button('下載字幕檔', disabled=True)
+
     except Exception as e:
         logger.error(f"主程式錯誤：{str(e)}")
         st.error(f"應用程式發生錯誤：{str(e)}")
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except Exception as e:
+        st.error(f"應用程式啟動失敗：{str(e)}")
+        logger.error(f"應用程式啟動失敗：{str(e)}")
