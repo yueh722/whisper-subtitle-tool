@@ -12,19 +12,10 @@ import shutil
 from datetime import datetime
 import torch
 import whisper
-import asyncio
-import nest_asyncio
-import pathlib
 
 # 確保臨時目錄存在
 TEMP_DIR = os.path.join(tempfile.gettempdir(), 'whisper_subtitle_tool')
 os.makedirs(TEMP_DIR, exist_ok=True)
-
-# 初始化 nest_asyncio
-try:
-    nest_asyncio.apply()
-except Exception as e:
-    print(f"nest_asyncio 初始化失敗：{str(e)}")
 
 # 設定日誌
 logging.basicConfig(
