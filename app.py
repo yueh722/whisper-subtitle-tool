@@ -1,474 +1,80 @@
 import os
-import sys
-import streamlit as st
+import whisper
+from flask import Flask, request, send_file, render_template_string, redirect, jsonify, make_response
+from werkzeug.utils import secure_filename
 import subprocess
 import uuid
-import json
-import logging
-import tempfile
 import zipfile
 import io
 import shutil
-from datetime import datetime
-import torch
-import whisper
-import asyncio
+import logging
+import threading
+import time
+import traceback
+import webbrowser
+import socket
+import json
+import atexit
 
 # 設定日誌
-logging.basicConfig(level=logging.INFO,
+logging.basicConfig(level=logging.DEBUG,
                    format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# 初始化全局變量
-if 'model' not in st.session_state:
+app = Flask(__name__)
+# 使用 C:\ffmpeg\bin 作為基礎路徑
+BASE_DIR = r'C:\ffmpeg\bin'
+UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
+OUTPUT_FOLDER = os.path.join(BASE_DIR, 'outputs')
+FFMPEG_PATH = os.path.join(BASE_DIR, 'ffmpeg.exe')
+TASKS_FILE = os.path.join(BASE_DIR, 'tasks.json')
+
+# 確保資料夾存在
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+
+# 儲存處理狀態
+processing_tasks = {}
+
+def save_tasks():
+    """將任務狀態儲存到檔案"""
     try:
-        st.session_state.model = whisper.load_model("base")
+        with open(TASKS_FILE, 'w', encoding='utf-8') as f:
+            # 只儲存已完成的任務
+            completed_tasks = {
+                task_id: task for task_id, task in processing_tasks.items()
+                if task['status'] == 'completed' and os.path.exists(task.get('zip_path', ''))
+            }
+            json.dump(completed_tasks, f, ensure_ascii=False, indent=2)
+        logger.info("任務狀態已儲存")
     except Exception as e:
-        st.error(f"模型載入失敗：{str(e)}")
-        st.session_state.model = None
+        logger.error(f"儲存任務狀態時發生錯誤：{str(e)}")
 
-# 設定頁面
-st.set_page_config(
-    page_title="字幕提取器",
-    page_icon="🎬",
-    layout="centered"
-)
+def load_tasks():
+    """從檔案載入任務狀態"""
+    global processing_tasks
+    try:
+        if os.path.exists(TASKS_FILE):
+            with open(TASKS_FILE, 'r', encoding='utf-8') as f:
+                loaded_tasks = json.load(f)
+                # 驗證每個任務的輸出檔案是否存在
+                valid_tasks = {}
+                for task_id, task in loaded_tasks.items():
+                    if os.path.exists(task.get('zip_path', '')):
+                        valid_tasks[task_id] = task
+                    else:
+                        logger.warning(f"任務 {task_id} 的輸出檔案不存在，將被忽略")
+                processing_tasks = valid_tasks
+            logger.info(f"已載入 {len(processing_tasks)} 個有效任務")
+    except Exception as e:
+        logger.error(f"載入任務狀態時發生錯誤：{str(e)}")
+        processing_tasks = {}
 
-# 自定義 CSS
-st.markdown("""
-<style>
-    /* 基礎顏色變量 */
-    :root {
-        --primary-color: #4A90E2;
-        --background-color: #1E1E1E;
-        --text-color: #FFFFFF;
-        --upload-bg: rgba(74, 144, 226, 0.1);
-        --upload-border: #4A90E2;
-    }
+# 程式啟動時載入任務狀態
+load_tasks()
 
-    .stApp {
-        background-color: var(--background-color);
-    }
-
-    .main {
-        color: var(--text-color);
-    }
-
-    /* 標題樣式 */
-    h1 {
-        color: var(--text-color) !important;
-        text-align: center;
-        padding: 20px 0;
-    }
-
-    /* 上傳區域樣式 */
-    .stFileUploader {
-        background-color: rgba(52, 73, 94, 0.7) !important;
-        border: 2px dashed var(--upload-border);
-        border-radius: 10px;
-        padding: 20px;
-        margin: 20px 0;
-    }
-
-    /* 確保上傳區域內的所有文字都是可見的 */
-    .stFileUploader > div {
-        color: #FFFFFF !important;
-    }
-
-    .stFileUploader p {
-        color: #FFFFFF !important;
-    }
-
-    .stFileUploader span {
-        color: #FFFFFF !important;
-    }
-
-    .stFileUploader small {
-        color: #FFFFFF !important;
-    }
-
-    /* 上傳區域的提示文字 */
-    .stFileUploader [data-testid="stFileUploadDropzone"] {
-        background-color: rgba(52, 73, 94, 0.5) !important;
-        color: #FFFFFF !important;
-        padding: 20px;
-        border-radius: 5px;
-    }
-
-    /* 上傳按鈕樣式 */
-    .stFileUploader button {
-        background-color: var(--primary-color) !important;
-        color: white !important;
-        border: none !important;
-        padding: 8px 16px !important;
-        border-radius: 4px !important;
-        cursor: pointer !important;
-        transition: all 0.3s ease !important;
-    }
-
-    .stFileUploader button:hover {
-        background-color: #357ABD !important;
-        transform: translateY(-2px) !important;
-    }
-
-    /* 標題文字樣式 */
-    .section-title {
-        color: var(--text-color) !important;
-        font-size: 1.2em;
-        margin: 20px 0 10px 0;
-        font-weight: 500;
-        text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.2);
-    }
-
-    /* 上傳說明文字樣式 */
-    .upload-text {
-        color: var(--text-color) !important;
-        background-color: rgba(74, 144, 226, 0.1);
-        padding: 10px;
-        border-radius: 5px;
-        margin: 10px 0;
-    }
-
-    /* 按鈕樣式統一 */
-    .stButton > button,
-    .stDownloadButton > button {
-        width: 100% !important;
-        height: 46px !important;
-        margin: 10px 0 !important;
-        background-color: rgba(36, 36, 68, 0.6) !important;
-        color: rgba(255, 255, 255, 0.3) !important;
-        border: 1px solid #4A90E2 !important;
-        border-radius: 5px !important;
-        font-size: 16px !important;
-        font-weight: 500 !important;
-        cursor: not-allowed !important;
-        transition: all 0.3s ease !important;
-    }
-
-    .stButton > button:disabled,
-    .stDownloadButton > button:disabled {
-        background-color: rgba(36, 36, 68, 0.6) !important;
-        color: rgba(255, 255, 255, 0.3) !important;
-        border-color: rgba(74, 144, 226, 0.3) !important;
-        cursor: not-allowed !important;
-    }
-
-    .stButton > button:not(:disabled),
-    .stDownloadButton > button:not(:disabled) {
-        background-color: #4A90E2 !important;
-        color: white !important;
-        border-color: #4A90E2 !important;
-        cursor: pointer !important;
-    }
-
-    .stButton > button:not(:disabled):hover,
-    .stDownloadButton > button:not(:disabled):hover {
-        background-color: #357ABD !important;
-        border-color: #357ABD !important;
-        transform: translateY(-2px) !important;
-    }
-
-    /* 狀態訊息樣式 */
-    .status-message {
-        margin: 10px 0;
-        padding: 15px;
-        border-radius: 5px;
-        text-align: center;
-        font-weight: 500;
-        font-size: 1.1em;
-        letter-spacing: 0.5px;
-        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
-        filter: brightness(1.5);
-    }
-
-    /* Checkbox 樣式 */
-    .stCheckbox {
-        color: var(--text-color) !important;
-    }
-
-    .stCheckbox label {
-        color: var(--text-color) !important;
-    }
-
-    /* 標題文字樣式 */
-    .section-title {
-        color: var(--text-color) !important;
-        font-size: 1.2em;
-        margin: 20px 0 10px 0;
-        display: block !important;
-        text-align: left !important;
-        line-height: 1.4 !important;
-        padding: 2px 0 !important;
-    }
-
-    /* 按鈕容器樣式 */
-    div.element-container:has(> div.stButton), 
-    div.element-container:has(> div.stDownloadButton) {
-        margin: 0 !important;
-        padding: 0 !important;
-        width: 100% !important;
-    }
-
-    div.row-widget.stButton,
-    div.row-widget.stDownloadButton {
-        margin: 0 !important;
-        padding: 0 !important;
-    }
-
-    /* 按鈕行容器 */
-    div.css-1kyxreq {
-        display: flex !important;
-        gap: 20px !important;
-        margin: 20px 0 !important;
-        align-items: stretch !important;
-    }
-
-    div.css-1kyxreq > div {
-        flex: 1 !important;
-        margin: 0 !important;
-    }
-
-    /* 格式選擇區域樣式 */
-    div.row-widget.stCheckbox {
-        background-color: rgba(36, 36, 68, 0.4) !important;
-        border: 1px solid #4A90E2 !important;
-        border-radius: 5px !important;
-        padding: 10px !important;
-        margin: 5px 0 !important;
-        height: 70px !important;
-        display: flex !important;
-        align-items: center !important;
-        justify-content: center !important;
-        position: relative !important;
-    }
-
-    div.row-widget.stCheckbox:hover {
-        background-color: rgba(74, 144, 226, 0.2) !important;
-        border-color: #4A90E2 !important;
-    }
-
-    /* Checkbox 容器 */
-    div.row-widget.stCheckbox > div {
-        display: flex !important;
-        align-items: center !important;
-        justify-content: center !important;
-        width: 100% !important;
-        height: 100% !important;
-        position: relative !important;
-        padding-left: 35px !important;
-    }
-
-    /* Checkbox 本身 */
-    div.row-widget.stCheckbox input[type="checkbox"] {
-        appearance: none !important;
-        -webkit-appearance: none !important;
-        width: 18px !important;
-        height: 18px !important;
-        border: 2px solid white !important;
-        border-radius: 3px !important;
-        margin: 0 !important;
-        cursor: pointer !important;
-        position: absolute !important;
-        left: 10px !important;
-        top: 50% !important;
-        transform: translateY(-50%) !important;
-        background-color: transparent !important;
-        z-index: 1 !important;
-    }
-
-    div.row-widget.stCheckbox input[type="checkbox"]:checked {
-        background-color: #4A90E2 !important;
-        border-color: #4A90E2 !important;
-    }
-
-    div.row-widget.stCheckbox input[type="checkbox"]:checked::after {
-        content: '✓' !important;
-        position: absolute !important;
-        color: white !important;
-        font-size: 14px !important;
-        font-weight: bold !important;
-        left: 2px !important;
-        top: -2px !important;
-    }
-
-    /* 標籤文字 */
-    div.row-widget.stCheckbox label {
-        color: white !important;
-        font-size: 0.9em !important;
-        font-weight: 500 !important;
-        text-align: center !important;
-        width: 100% !important;
-        cursor: pointer !important;
-        text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5) !important;
-        line-height: 1.2 !important;
-        display: flex !important;
-        flex-direction: column !important;
-        align-items: center !important;
-        justify-content: center !important;
-        min-height: 40px !important;
-        gap: 4px !important;
-    }
-
-    /* 格式選項文字樣式 */
-    .css-1djdyxw.ek41t0m0 {
-        color: white !important;
-        font-size: 0.95em !important;
-        margin: 2px 0 !important;
-        display: block !important;
-        text-align: center !important;
-        line-height: 1.4 !important;
-        padding: 2px 0 !important;
-    }
-
-    .css-1djdyxw.ek41t0m0:last-child {
-        font-size: 0.85em !important;
-        opacity: 0.9 !important;
-        margin-top: 4px !important;
-    }
-
-    /* 格式選擇容器 */
-    div.stColumns {
-        gap: 10px !important;
-    }
-
-    div.stColumns > div {
-        flex: 1 1 0 !important;
-        width: calc(20% - 8px) !important;
-        min-width: 0 !important;
-    }
-
-    /* 確保所有文字都是白色 */
-    div.row-widget.stCheckbox * {
-        color: white !important;
-    }
-
-    /* 提示訊息容器 */
-    div.stAlert {
-        background-color: rgba(36, 36, 68, 0.4) !important;
-        border: 1px solid #4A90E2 !important;
-        border-radius: 5px !important;
-        padding: 16px !important;
-        margin: 20px 0 !important;
-        text-align: center !important;
-        min-height: 60px !important;
-        width: 100% !important;
-        max-width: 800px !important;
-        display: flex !important;
-        align-items: center !important;
-        justify-content: center !important;
-    }
-
-    /* 訊息區域樣式 */
-    #status-area {
-        margin: 20px 0 !important;
-        padding: 20px !important;
-        border-radius: 10px !important;
-        background-color: rgba(36, 36, 68, 0.4) !important;
-        min-height: 60px !important;
-        width: 100% !important;
-        max-width: 800px !important;
-        border: 1px solid #4A90E2 !important;
-        box-sizing: border-box !important;
-    }
-
-    .status-info {
-        background-color: rgba(52, 152, 219, 0.2);
-        color: #5dade2;
-        border: 1px solid rgba(52, 152, 219, 0.3);
-    }
-
-    .status-error {
-        background-color: rgba(231, 76, 60, 0.2);
-        color: #ff7675;
-        border: 1px solid rgba(231, 76, 60, 0.3);
-    }
-
-    .status-success {
-        background-color: rgba(46, 204, 113, 0.2);
-        color: #7bed9f;
-        border: 1px solid rgba(46, 204, 113, 0.3);
-    }
-
-    .status-processing {
-        background-color: rgba(241, 196, 15, 0.2);
-        color: #ffeaa7;
-        border: 1px solid rgba(241, 196, 15, 0.3);
-        animation: pulse 2s infinite;
-    }
-
-    @keyframes pulse {
-        0% { opacity: 0.6; }
-        50% { opacity: 1; }
-        100% { opacity: 0.6; }
-    }
-
-    /* 隱藏 Streamlit 的 spinner */
-    .stSpinner {
-        display: none !important;
-    }
-
-    /* 確保所有容器寬度一致 */
-    .main .block-container {
-        max-width: 800px !important;
-        padding: 0 !important;
-        margin: 0 auto !important;
-    }
-
-    /* 隱藏 Streamlit 預設的漢堡選單和頁尾 */
-    #MainMenu, footer {
-        visibility: hidden;
-    }
-
-    /* 成功訊息樣式 */
-    div.element-container div.stAlert.success {
-        background-color: rgba(46, 204, 113, 0.2) !important;
-        border-color: #2ecc71 !important;
-    }
-
-    div.element-container div.stAlert.success div {
-        color: #7bed9f !important;
-        filter: brightness(1.5);
-    }
-
-    /* 錯誤訊息樣式 */
-    div.element-container div.stAlert.error {
-        background-color: rgba(231, 76, 60, 0.2) !important;
-        border-color: #e74c3c !important;
-    }
-
-    div.element-container div.stAlert.error div {
-        color: #ff7675 !important;
-        filter: brightness(1.5);
-    }
-
-    /* 資訊訊息樣式 */
-    div.element-container div.stAlert.info {
-        background-color: rgba(52, 152, 219, 0.2) !important;
-        border-color: #3498db !important;
-    }
-
-    div.element-container div.stAlert.info div {
-        color: #5dade2 !important;
-        filter: brightness(1.5);
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# 初始化 session state
-if 'processed' not in st.session_state:
-    st.session_state.processed = False
-if 'outputs' not in st.session_state:
-    st.session_state.outputs = None
-if 'filename' not in st.session_state:
-    st.session_state.filename = None
-if 'status_message' not in st.session_state:
-    st.session_state.status_message = "請選擇要處理的影音檔案"
-if 'status_type' not in st.session_state:
-    st.session_state.status_type = "info"
-if 'processing' not in st.session_state:
-    st.session_state.processing = False
-if 'downloaded' not in st.session_state:
-    st.session_state.downloaded = False
+# 註冊程式結束時的處理函數
+atexit.register(save_tasks)
 
 def format_timestamp(seconds, always_include_hours=False):
     """將秒數轉換為 SRT/VTT 時間戳格式"""
@@ -546,158 +152,745 @@ def write_vtt(segments):
         output.append("")
     return "\n".join(output)
 
-def check_ffmpeg():
-    """檢查 ffmpeg 是否可用"""
-    try:
-        subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
-        return True
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return False
+FORM_HTML = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>字幕提取器</title>
+    <meta charset="UTF-8">
+    <style>
+        :root {
+            --primary-color: #2196F3;
+            --primary-dark: #1976D2;
+            --background-color: #1a1a2e;
+            --container-bg: #242444;
+            --text-color: #ffffff;
+            --border-color: #3498db;
+        }
 
-def process_audio(audio_file, formats):
-    """處理音訊檔案並生成字幕"""
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            margin: 0;
+            padding: 40px 20px;
+            background-color: var(--background-color);
+            color: var(--text-color);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .container {
+            background-color: var(--container-bg);
+            padding: 40px;
+            border-radius: 15px;
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+            backdrop-filter: blur(4px);
+            border: 1px solid var(--border-color);
+            width: 90%;
+            max-width: 800px;
+        }
+
+        h2 {
+            color: var(--text-color);
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.2em;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            position: relative;
+            padding-bottom: 15px;
+        }
+
+        h2:after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 60px;
+            height: 4px;
+            background: var(--primary-color);
+            border-radius: 2px;
+        }
+
+        .form-group {
+            margin-bottom: 30px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 10px;
+            font-size: 1.1em;
+            color: var(--text-color);
+        }
+
+        .file-input-container {
+            position: relative;
+            margin-bottom: 20px;
+        }
+
+        .file-input-label {
+            display: inline-block;
+            padding: 15px 20px;
+            background-color: rgba(36, 36, 68, 0.6);
+            color: var(--text-color);
+            border-radius: 5px;
+            cursor: pointer;
+            width: 100%;
+            text-align: center;
+            transition: all 0.3s ease;
+            border: 1px solid var(--border-color);
+            font-size: 1.5em;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .file-input-label.has-file {
+            background-color: rgba(33, 150, 243, 0.15);
+            border-color: var(--primary-color);
+            filter: brightness(1.5);
+        }
+
+        .file-input-label:hover {
+            background-color: rgba(33, 150, 243, 0.3);
+        }
+
+        .file-input {
+            position: absolute;
+            left: -9999px;
+        }
+
+        .checkbox-group {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin: 20px 0;
+            flex-wrap: nowrap;
+        }
+
+        .format-option {
+            flex: 1;
+            max-width: 150px;
+        }
+
+        .format-option input[type="checkbox"] {
+            display: none;
+        }
+
+        .format-option label {
+            display: block;
+            padding: 12px 15px;
+            text-align: center;
+            background-color: rgba(36, 36, 68, 0.6);
+            border: 1px solid var(--border-color);
+            border-radius: 5px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 0.9em;
+            color: var(--text-color);
+            opacity: 0.6;
+        }
+
+        .format-option input[type="checkbox"]:checked + label {
+            background-color: rgba(33, 150, 243, 0.15);
+            border-color: var(--primary-color);
+            opacity: 1;
+            filter: brightness(1.5);
+        }
+
+        .format-option label:hover {
+            opacity: 0.8;
+            background-color: rgba(33, 150, 243, 0.2);
+        }
+
+        .button-group {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            margin-bottom: 20px;
+        }
+
+        .button {
+            flex: 1;
+            max-width: 250px;
+            padding: 12px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1em;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            background-color: rgba(36, 36, 68, 0.6); /* 預設為暗色 */
+            color: rgba(255, 255, 255, 0.3);
+            filter: brightness(0.8);
+        }
+
+        .button.active {
+            background-color: rgba(33, 150, 243, 0.8);
+            color: white;
+            filter: brightness(1);
+            cursor: pointer;
+        }
+
+        .button.active:hover {
+            background-color: var(--primary-color);
+            transform: translateY(-2px);
+            filter: brightness(1.2);
+        }
+
+        .button:disabled {
+            background-color: rgba(36, 36, 68, 0.6);
+            cursor: not-allowed;
+            color: rgba(255, 255, 255, 0.3);
+            transform: none;
+            filter: brightness(0.8);
+        }
+
+        #status-area {
+            margin-top: 30px;
+            padding: 20px;
+            border-radius: 10px;
+            background-color: rgba(36, 36, 68, 0.4);
+            min-height: 60px;
+            font-size: 1.2em;
+        }
+
+        .status-message {
+            margin: 10px 0;
+            padding: 15px;
+            border-radius: 5px;
+            text-align: center;
+        }
+
+        .status-info {
+            background-color: rgba(52, 152, 219, 0.1);
+            color: rgba(52, 152, 219, 0.8);
+        }
+
+        .status-error {
+            background-color: rgba(231, 76, 60, 0.1);
+            color: rgba(231, 76, 60, 0.8);
+        }
+
+        .status-success {
+            background-color: rgba(46, 204, 113, 0.1);
+            color: rgba(46, 204, 113, 0.8);
+        }
+
+        .loading {
+            display: inline-block;
+            width: 24px;
+            height: 24px;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-top: 3px solid var(--primary-color);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+            vertical-align: middle;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        /* 新增的動畫效果 */
+        .container {
+            animation: fadeIn 0.5s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .button, .file-input-label {
+            position: relative;
+            overflow: hidden;
+        }
+
+        .button:after, .file-input-label:after {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: linear-gradient(
+                to right,
+                rgba(255, 255, 255, 0) 0%,
+                rgba(255, 255, 255, 0.3) 50%,
+                rgba(255, 255, 255, 0) 100%
+            );
+            transform: rotate(45deg);
+            transition: all 0.5s;
+            opacity: 0;
+        }
+
+        .button:hover:not(:disabled):after,
+        .file-input-label:hover:after {
+            animation: shine 1.5s ease-out infinite;
+        }
+
+        @keyframes shine {
+            0% { transform: rotate(45deg) translateX(-200%); }
+            100% { transform: rotate(45deg) translateX(200%); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>智能字幕提取系統</h2>
+        <form id="uploadForm">
+            <div class="form-group">
+                <div class="file-input-container">
+                    <label class="file-input-label" for="media-file">
+                        選擇影音檔
+                    </label>
+                    <input type="file" id="media-file" name="media" required class="file-input" 
+                        accept="audio/*,video/*,.mkv,.mp4,.avi,.mov,.wmv,.flv,.webm">
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label>選擇輸出格式：</label>
+                <div class="checkbox-group">
+                    <div class="format-option">
+                        <input type="checkbox" id="format-txt" name="formats" value="txt" checked>
+                        <label for="format-txt">純文字<br>(.txt)</label>
+                    </div>
+                    <div class="format-option">
+                        <input type="checkbox" id="format-srt" name="formats" value="srt" checked>
+                        <label for="format-srt">字幕檔<br>(.srt)</label>
+                    </div>
+                    <div class="format-option">
+                        <input type="checkbox" id="format-vtt" name="formats" value="vtt">
+                        <label for="format-vtt">網頁字幕<br>(.vtt)</label>
+                    </div>
+                    <div class="format-option">
+                        <input type="checkbox" id="format-tsv" name="formats" value="tsv">
+                        <label for="format-tsv">Excel格式<br>(.tsv)</label>
+                    </div>
+                    <div class="format-option">
+                        <input type="checkbox" id="format-json" name="formats" value="json">
+                        <label for="format-json">JSON格式<br>(.json)</label>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="button-group">
+                <button type="submit" class="button" id="submitBtn" disabled>開始提取</button>
+                <button type="button" class="button" id="downloadBtn" disabled>下載字幕檔</button>
+            </div>
+            
+            <div id="status-area">
+                <div class="status-message status-info">請選擇影音檔案並點擊「開始提取」按鈕</div>
+            </div>
+        </form>
+    </div>
+
+    <script>
+        // 更新按鈕狀態
+        function updateSubmitButton() {
+            const submitBtn = document.getElementById('submitBtn');
+            const fileInput = document.getElementById('media-file');
+            const formatCheckboxes = document.querySelectorAll('input[name="formats"]:checked');
+            
+            if (fileInput.files.length > 0 && formatCheckboxes.length > 0) {
+                submitBtn.disabled = false;
+                submitBtn.classList.add('active');
+            } else {
+                submitBtn.disabled = true;
+                submitBtn.classList.remove('active');
+            }
+        }
+
+        // 監聽檔案選擇
+        document.getElementById('media-file').addEventListener('change', function(e) {
+            const label = document.querySelector('.file-input-label');
+            if (e.target.files[0]) {
+                label.textContent = e.target.files[0].name;
+                label.classList.add('has-file');
+            } else {
+                label.textContent = '選擇影音檔';
+                label.classList.remove('has-file');
+            }
+            updateSubmitButton();
+        });
+
+        // 監聽格式選擇
+        document.querySelectorAll('input[name="formats"]').forEach(checkbox => {
+            checkbox.addEventListener('change', updateSubmitButton);
+        });
+
+        // 重設表單
+        function resetForm() {
+            const form = document.getElementById('uploadForm');
+            const label = document.querySelector('.file-input-label');
+            const submitBtn = document.getElementById('submitBtn');
+            const downloadBtn = document.getElementById('downloadBtn');
+            
+            form.reset();
+            label.textContent = '選擇影音檔';
+            label.classList.remove('has-file');
+            submitBtn.disabled = true;
+            submitBtn.classList.remove('active');
+            downloadBtn.disabled = true;
+            downloadBtn.classList.remove('active');
+            addStatusMessage('請選擇影音檔案並點擊「開始提取」按鈕', 'info');
+        }
+
+        document.getElementById('uploadForm').onsubmit = function(e) {
+            e.preventDefault();
+            
+            const submitBtn = document.getElementById('submitBtn');
+            const downloadBtn = document.getElementById('downloadBtn');
+            
+            submitBtn.disabled = true;
+            submitBtn.classList.remove('active');
+            downloadBtn.disabled = true;
+            downloadBtn.classList.remove('active');
+            
+            const formData = new FormData(this);
+            
+            addStatusMessage('開始處理檔案...', 'info');
+            
+            fetch('/process', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    pollStatus(data.task_id);
+                } else {
+                    addStatusMessage('錯誤：' + data.error, 'error');
+                    updateSubmitButton();
+                }
+            })
+            .catch(error => {
+                addStatusMessage('錯誤：' + error, 'error');
+                updateSubmitButton();
+            });
+        };
+        
+        function pollStatus(taskId) {
+            const submitBtn = document.getElementById('submitBtn');
+            const downloadBtn = document.getElementById('downloadBtn');
+            
+            fetch('/status/' + taskId)
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'processing') {
+                    addStatusMessage(data.message, 'info');
+                    setTimeout(() => pollStatus(taskId), 1000);
+                } else if (data.status === 'completed') {
+                    addStatusMessage('處理完成！點擊「下載字幕檔」下載，或選擇新的檔案處理', 'success');
+                    updateSubmitButton();
+                    downloadBtn.disabled = false;
+                    downloadBtn.classList.add('active');
+                    downloadBtn.onclick = function() {
+                        this.disabled = true;
+                        this.classList.remove('active');
+                        window.location.href = '/download/' + taskId;
+                        setTimeout(resetForm, 1000);
+                    };
+                } else if (data.status === 'error') {
+                    addStatusMessage('錯誤：' + data.error, 'error');
+                    updateSubmitButton();
+                }
+            })
+            .catch(error => {
+                addStatusMessage('狀態檢查錯誤：' + error, 'error');
+                updateSubmitButton();
+            });
+        }
+        
+        function addStatusMessage(message, type) {
+            const statusArea = document.getElementById('status-area');
+            statusArea.innerHTML = '';
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'status-message status-' + type;
+            messageDiv.textContent = message;
+            statusArea.appendChild(messageDiv);
+        }
+    </script>
+</body>
+</html>
+"""
+
+def check_ffmpeg():
+    """檢查 ffmpeg 是否存在於指定路徑"""
+    logger.info(f"檢查 ffmpeg 路徑: {FFMPEG_PATH}")
+    if not os.path.exists(FFMPEG_PATH):
+        raise RuntimeError(
+            f"在路徑 {FFMPEG_PATH} 找不到 ffmpeg！\n"
+            "請確認 ffmpeg.exe 是否存在於該路徑。"
+        )
+    logger.info("ffmpeg 檢查通過")
+
+def process_file(task_id, file_path, formats):
     try:
-        with st.spinner('正在處理音訊...'):
-            with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as temp_audio:
-                try:
-                    temp_audio.write(audio_file.getvalue())
-                    temp_audio_path = temp_audio.name
-                    
-                    if st.session_state.model is None:
-                        raise Exception("模型未正確載入")
-                    
-                    with torch.inference_mode():
-                        result = st.session_state.model.transcribe(temp_audio_path, verbose=False)
-                    
-                    outputs = {}
-                    processed_segments = merge_short_segments(result['segments'])
-                    
-                    for fmt in formats:
-                        if fmt == 'txt':
-                            outputs['txt'] = '\n'.join(clean_text(segment['text']) for segment in processed_segments)
-                        elif fmt == 'srt':
-                            outputs['srt'] = write_srt(result['segments'])
-                        elif fmt == 'vtt':
-                            outputs['vtt'] = write_vtt(result['segments'])
-                        elif fmt == 'tsv':
-                            outputs['tsv'] = '開始時間\t結束時間\t文字內容\n' + '\n'.join(
-                                f"{format_timestamp(seg['start'])}\t{format_timestamp(seg['end'])}\t{clean_text(seg['text'])}"
-                                for seg in processed_segments
-                            )
-                        elif fmt == 'json':
-                            clean_result = {
-                                'text': '\n'.join(clean_text(segment['text']) for segment in processed_segments),
-                                'segments': [{
-                                    'start': segment['start'],
-                                    'end': segment['end'],
-                                    'text': clean_text(segment['text'])
-                                } for segment in processed_segments]
-                            }
-                            outputs['json'] = json.dumps(clean_result, ensure_ascii=False, indent=2)
-                    
-                    return outputs
-                    
-                except Exception as e:
-                    logger.error(f"處理失敗：{str(e)}")
-                    raise
-                finally:
-                    try:
-                        os.unlink(temp_audio_path)
-                    except:
-                        pass
+        logger.info(f"開始處理任務 {task_id}")
+        logger.info(f"檔案路徑: {file_path}")
+        logger.info(f"選擇的格式: {formats}")
+        
+        processing_tasks[task_id]['status'] = 'processing'
+        processing_tasks[task_id]['message'] = '正在檢查檔案...'
+        
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"找不到上傳的檔案：{file_path}")
+            
+        if not os.path.exists(FFMPEG_PATH):
+            raise FileNotFoundError(f"找不到 ffmpeg，請確認 {FFMPEG_PATH} 是否存在")
+        
+        processing_tasks[task_id]['message'] = '正在轉換音訊...'
+        audio_path = os.path.join(UPLOAD_FOLDER, f"{processing_tasks[task_id]['original_filename']}_{task_id}.mp3")
+        logger.info(f"準備轉換音訊到: {audio_path}")
+        
+        try:
+            result = subprocess.run([
+                FFMPEG_PATH,
+                '-i', file_path,
+                '-vn',
+                '-ar', '16000',
+                '-ac', '1',
+                '-acodec', 'libmp3lame',
+                '-y',
+                audio_path
+            ], capture_output=True, text=True, check=True)
+            logger.info("音訊轉換完成")
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(f"音訊轉換失敗：{e.stderr}")
+        
+        processing_tasks[task_id]['message'] = '正在提取字幕...'
+        logger.info("開始使用 Whisper 提取字幕")
+        
+        try:
+            result = model.transcribe(audio_path, verbose=False)
+            logger.info("字幕提取完成")
+        except Exception as e:
+            raise RuntimeError(f"Whisper 處理失敗：{str(e)}")
+        
+        processing_tasks[task_id]['message'] = '正在產生輸出檔案...'
+        memory_file = io.BytesIO()
+        original_filename = processing_tasks[task_id]['original_filename']
+        
+        processed_segments = merge_short_segments(result['segments'])
+        
+        with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for fmt in formats:
+                content = ''
+                if fmt == 'txt':
+                    content = '\n'.join(clean_text(segment['text']) for segment in processed_segments)
+                elif fmt == 'srt':
+                    content = write_srt(result['segments'])
+                elif fmt == 'vtt':
+                    content = write_vtt(result['segments'])
+                elif fmt == 'tsv':
+                    content = '開始時間\t結束時間\t文字內容\n'
+                    content += '\n'.join(
+                        f"{format_timestamp(seg['start'])}\t{format_timestamp(seg['end'])}\t{clean_text(seg['text'])}"
+                        for seg in processed_segments
+                    )
+                elif fmt == 'json':
+                    import json
+                    clean_result = {
+                        'text': '\n'.join(clean_text(segment['text']) for segment in processed_segments),
+                        'segments': [{
+                            'start': segment['start'],
+                            'end': segment['end'],
+                            'text': clean_text(segment['text'])
+                        } for segment in processed_segments]
+                    }
+                    content = json.dumps(clean_result, ensure_ascii=False, indent=2)
+                
+                output_filename = f"{original_filename}_{task_id}.{fmt}"
+                zf.writestr(output_filename, content)
+                logger.info(f"已生成 {output_filename}")
+
+        # 儲存ZIP檔案
+        memory_file.seek(0)
+        zip_path = os.path.join(OUTPUT_FOLDER, f"{original_filename}_{task_id}.zip")
+        with open(zip_path, 'wb') as f:
+            f.write(memory_file.getvalue())
+        logger.info(f"ZIP檔案已儲存到: {zip_path}")
+        
+        # 清理暫存檔
+        try:
+            logger.info("清理暫存檔")
+            os.remove(audio_path)
+        except Exception as e:
+            logger.warning(f"清理暫存檔失敗：{str(e)}")
+        
+        processing_tasks[task_id]['status'] = 'completed'
+        processing_tasks[task_id]['zip_path'] = zip_path
+        logger.info(f"任務 {task_id} 完成")
+        
     except Exception as e:
         logger.error(f"處理失敗：{str(e)}")
-        raise
+        logger.error(traceback.format_exc())
+        processing_tasks[task_id]['status'] = 'error'
+        processing_tasks[task_id]['error'] = str(e)
 
-def create_zip_file(outputs, filename_prefix):
-    """將所有輸出打包成ZIP檔案"""
-    memory_file = io.BytesIO()
-    with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
-        for fmt, content in outputs.items():
-            output_filename = f"{filename_prefix}.{fmt}"
-            zf.writestr(output_filename, content)
-    memory_file.seek(0)
-    return memory_file
+try:
+    check_ffmpeg()
+    logger.info("正在載入 Whisper 模型...")
+    model = whisper.load_model("base")
+    logger.info("Whisper 模型載入成功")
+except Exception as e:
+    logger.error(f"初始化錯誤：{str(e)}")
+    model = None
 
-def main():
+@app.route('/')
+def index():
+    return render_template_string(FORM_HTML)
+
+@app.route('/process', methods=['POST'])
+def process():
     try:
-        st.title("智能字幕提取系統")
-        
-        # 檔案上傳
-        st.markdown('<div class="section-title">選擇影音檔：</div>', unsafe_allow_html=True)
-        st.markdown('<div class="upload-text">支援多種影音格式，包括 MP3、WAV、MP4、MKV 等</div>', unsafe_allow_html=True)
-        
-        uploaded_file = st.file_uploader(
-            "上傳檔案",
-            type=['mp3', 'wav', 'mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm'],
-            help="支援多種影音格式，包括 MP3、WAV、MP4、MKV 等",
-            on_change=lambda: setattr(st.session_state, 'downloaded', False)
+        if model is None:
+            return jsonify({'success': False, 'error': '模型載入失敗，請檢查系統設定'})
+
+        file = request.files['media']
+        if not file:
+            return jsonify({'success': False, 'error': '沒有檔案'})
+
+        formats = request.form.getlist('formats')
+        if not formats:
+            return jsonify({'success': False, 'error': '請至少選擇一種輸出格式'})
+
+        task_id = str(uuid.uuid4())
+        original_filename = secure_filename(file.filename)
+        original_name = os.path.splitext(original_filename)[0]
+        file_path = os.path.join(UPLOAD_FOLDER, f"{original_name}_{task_id}")
+        file.save(file_path)
+
+        # 初始化任務狀態
+        processing_tasks[task_id] = {
+            'status': 'processing',
+            'message': '開始處理...',
+            'file_path': file_path,
+            'original_filename': original_name
+        }
+
+        # 在背景執行處理
+        thread = threading.Thread(
+            target=process_file,
+            args=(task_id, file_path, formats)
         )
-        
-        # 格式選擇
-        st.markdown('<div class="section-title">選擇輸出格式：</div>', unsafe_allow_html=True)
-        
-        col1, col2, col3, col4, col5 = st.columns(5)
-        with col1:
-            txt_format = st.checkbox('純文字\n(.txt)', value=True)
-        with col2:
-            srt_format = st.checkbox('字幕檔\n(.srt)', value=True)
-        with col3:
-            vtt_format = st.checkbox('網頁字幕\n(.vtt)', value=True)
-        with col4:
-            tsv_format = st.checkbox('Excel格式\n(.tsv)', value=True)
-        with col5:
-            json_format = st.checkbox('JSON格式\n(.json)', value=True)
-        
-        formats = []
-        if txt_format:
-            formats.append('txt')
-        if srt_format:
-            formats.append('srt')
-        if vtt_format:
-            formats.append('vtt')
-        if tsv_format:
-            formats.append('tsv')
-        if json_format:
-            formats.append('json')
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if st.button('開始提取', disabled=not (uploaded_file and formats) or st.session_state.get('processing', False)):
-                try:
-                    st.session_state.processing = True
-                    st.session_state.downloaded = False
-                    
-                    with st.spinner('正在提取字幕...'):
-                        outputs = process_audio(uploaded_file, formats)
-                        st.session_state.outputs = outputs
-                        st.session_state.filename = os.path.splitext(uploaded_file.name)[0]
-                        st.session_state.processed = True
-                        st.success('處理完成！請點擊右側按鈕下載字幕檔')
-                except Exception as e:
-                    st.error(f'處理失敗：{str(e)}')
-                    logger.error(f"處理失敗：{str(e)}")
-                finally:
-                    st.session_state.processing = False
-        
-        with col2:
-            if st.session_state.get('outputs') and not st.session_state.get('downloaded', False):
-                zip_file = create_zip_file(st.session_state.outputs, st.session_state.filename)
-                if st.download_button(
-                    label='下載字幕檔',
-                    data=zip_file,
-                    file_name=f"{st.session_state.filename}_subtitles.zip",
-                    mime='application/zip'
-                ):
-                    st.session_state.downloaded = True
-                    st.success('下載完成！可以繼續處理新的檔案')
-            else:
-                st.button('下載字幕檔', disabled=True)
+        thread.start()
+
+        return jsonify({
+            'success': True,
+            'task_id': task_id
+        })
 
     except Exception as e:
-        logger.error(f"主程式錯誤：{str(e)}")
-        st.error(f"應用程式發生錯誤：{str(e)}")
+        logger.error(f"處理請求時發生錯誤：{str(e)}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })
+
+@app.route('/status/<task_id>')
+def status(task_id):
+    if task_id not in processing_tasks:
+        return jsonify({
+            'status': 'error',
+            'error': '找不到任務'
+        })
+    
+    task = processing_tasks[task_id]
+    return jsonify({
+        'status': task['status'],
+        'message': task.get('message', ''),
+        'error': task.get('error', '')
+    })
+
+@app.route('/download/<task_id>')
+def download(task_id):
+    logger.info(f"嘗試下載任務 {task_id}")
+    
+    if task_id not in processing_tasks:
+        logger.error(f"找不到任務 {task_id}")
+        return render_template_string("""
+            <script>
+                alert("找不到任務，請重新上傳檔案處理");
+                window.location.href = '/';
+            </script>
+        """)
+    
+    task = processing_tasks[task_id]
+    if task['status'] != 'completed':
+        logger.error(f"任務 {task_id} 尚未完成，目前狀態：{task['status']}")
+        return render_template_string("""
+            <script>
+                alert("檔案尚未處理完成，請稍候再試");
+                window.location.href = '/';
+            </script>
+        """)
+    
+    try:
+        if not os.path.exists(task['zip_path']):
+            logger.error(f"找不到ZIP檔案：{task['zip_path']}")
+            return render_template_string("""
+                <script>
+                    alert("找不到輸出檔案，請重新處理");
+                    window.location.href = '/';
+                </script>
+            """)
+        
+        response = send_file(
+            task['zip_path'],
+            mimetype='application/zip',
+            as_attachment=True,
+            download_name=f"{task['original_filename']}_{task_id}.zip"
+        )
+        
+        # 設定不快取
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        
+        # 下載完成後清理檔案和任務狀態
+        try:
+            os.remove(task['zip_path'])
+            del processing_tasks[task_id]
+        except Exception as e:
+            logger.warning(f"清理檔案失敗：{str(e)}")
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"下載失敗：{str(e)}")
+        logger.error(traceback.format_exc())
+        return render_template_string("""
+            <script>
+                alert("下載失敗，請重試");
+                window.location.href = '/';
+            </script>
+        """)
+
+def is_port_in_use(port):
+    """檢查端口是否已被使用"""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind(('localhost', port))
+            return False
+        except socket.error:
+            return True
 
 if __name__ == '__main__':
-    main()
+    port = 5000
+    # 只在端口未被使用時才開啟瀏覽器
+    if not is_port_in_use(port):
+        webbrowser.open(f'http://127.0.0.1:{port}')
+    app.run(debug=True, port=port)
