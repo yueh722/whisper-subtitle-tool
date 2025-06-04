@@ -1,6 +1,6 @@
 streamlit>=1.24.0
 torch>=2.0.0
-openai-whisper>=20231117
+git+https://github.com/openai/whisper.git@e7eb0cd
 nest-asyncio>=1.5.6
 numpy>=1.24.0
 tqdm>=4.65.0
@@ -8,4 +8,4 @@ more-itertools
 transformers>=4.19.0
 setuptools-rust
 flask>=2.0.0
-werkzeug>=2.0.0 
+werkzeug>=2.0.0
