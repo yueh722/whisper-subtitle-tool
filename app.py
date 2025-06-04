@@ -63,7 +63,7 @@ st.markdown("""
 
     /* 上傳區域樣式 */
     .stFileUploader {
-        background-color: var(--upload-bg);
+        background-color: rgba(52, 73, 94, 0.7) !important;
         border: 2px dashed var(--upload-border);
         border-radius: 10px;
         padding: 20px;
@@ -72,20 +72,43 @@ st.markdown("""
 
     /* 確保上傳區域內的所有文字都是可見的 */
     .stFileUploader > div {
-        color: var(--text-color) !important;
-        background-color: rgba(74, 144, 226, 0.1) !important;
+        color: #FFFFFF !important;
     }
 
     .stFileUploader p {
-        color: var(--text-color) !important;
+        color: #FFFFFF !important;
     }
 
     .stFileUploader span {
-        color: var(--text-color) !important;
+        color: #FFFFFF !important;
     }
 
     .stFileUploader small {
-        color: var(--text-color) !important;
+        color: #FFFFFF !important;
+    }
+
+    /* 上傳區域的提示文字 */
+    .stFileUploader [data-testid="stFileUploadDropzone"] {
+        background-color: rgba(52, 73, 94, 0.5) !important;
+        color: #FFFFFF !important;
+        padding: 20px;
+        border-radius: 5px;
+    }
+
+    /* 上傳按鈕樣式 */
+    .stFileUploader button {
+        background-color: var(--primary-color) !important;
+        color: white !important;
+        border: none !important;
+        padding: 8px 16px !important;
+        border-radius: 4px !important;
+        cursor: pointer !important;
+        transition: all 0.3s ease !important;
+    }
+
+    .stFileUploader button:hover {
+        background-color: #357ABD !important;
+        transform: translateY(-2px) !important;
     }
 
     /* 標題文字樣式 */
@@ -106,40 +129,56 @@ st.markdown("""
         margin: 10px 0;
     }
 
-    /* 按鈕樣式 */
-    .stButton > button {
+    /* 按鈕樣式統一 */
+    .stButton > button,
+    .stDownloadButton > button {
         width: 100% !important;
         height: 46px !important;
         margin: 10px 0 !important;
-        background-color: var(--primary-color) !important;
-        color: white !important;
-        border: none !important;
+        background-color: rgba(36, 36, 68, 0.6) !important;
+        color: rgba(255, 255, 255, 0.3) !important;
+        border: 1px solid #4A90E2 !important;
         border-radius: 5px !important;
         font-size: 16px !important;
         font-weight: 500 !important;
-        cursor: pointer !important;
+        cursor: not-allowed !important;
         transition: all 0.3s ease !important;
     }
 
-    .stButton > button:disabled {
-        background-color: rgba(74, 144, 226, 0.3) !important;
+    .stButton > button:disabled,
+    .stDownloadButton > button:disabled {
+        background-color: rgba(36, 36, 68, 0.6) !important;
+        color: rgba(255, 255, 255, 0.3) !important;
+        border-color: rgba(74, 144, 226, 0.3) !important;
         cursor: not-allowed !important;
     }
 
-    .stButton > button:not(:disabled):hover {
+    .stButton > button:not(:disabled),
+    .stDownloadButton > button:not(:disabled) {
+        background-color: #4A90E2 !important;
+        color: white !important;
+        border-color: #4A90E2 !important;
+        cursor: pointer !important;
+    }
+
+    .stButton > button:not(:disabled):hover,
+    .stDownloadButton > button:not(:disabled):hover {
         background-color: #357ABD !important;
+        border-color: #357ABD !important;
         transform: translateY(-2px) !important;
     }
 
     /* 狀態訊息樣式 */
     .status-message {
+        margin: 10px 0;
         padding: 15px;
         border-radius: 5px;
-        margin: 10px 0;
         text-align: center;
-        background-color: rgba(74, 144, 226, 0.1);
-        border: 1px solid var(--primary-color);
-        color: var(--text-color);
+        font-weight: 500;
+        font-size: 1.1em;
+        letter-spacing: 0.5px;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+        filter: brightness(1.5);
     }
 
     /* Checkbox 樣式 */
@@ -160,12 +199,6 @@ st.markdown("""
         text-align: left !important;
         line-height: 1.4 !important;
         padding: 2px 0 !important;
-    }
-
-    /* 上傳按鈕樣式 */
-    .stFileUploader button {
-        background-color: #4A90E2 !important;
-        color: white !important;
     }
 
     /* 按鈕容器樣式 */
@@ -320,6 +353,9 @@ st.markdown("""
         min-height: 60px !important;
         width: 100% !important;
         max-width: 800px !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
     }
 
     /* 訊息區域樣式 */
@@ -381,6 +417,39 @@ st.markdown("""
     /* 隱藏 Streamlit 預設的漢堡選單和頁尾 */
     #MainMenu, footer {
         visibility: hidden;
+    }
+
+    /* 成功訊息樣式 */
+    div.element-container div.stAlert.success {
+        background-color: rgba(46, 204, 113, 0.2) !important;
+        border-color: #2ecc71 !important;
+    }
+
+    div.element-container div.stAlert.success div {
+        color: #7bed9f !important;
+        filter: brightness(1.5);
+    }
+
+    /* 錯誤訊息樣式 */
+    div.element-container div.stAlert.error {
+        background-color: rgba(231, 76, 60, 0.2) !important;
+        border-color: #e74c3c !important;
+    }
+
+    div.element-container div.stAlert.error div {
+        color: #ff7675 !important;
+        filter: brightness(1.5);
+    }
+
+    /* 資訊訊息樣式 */
+    div.element-container div.stAlert.info {
+        background-color: rgba(52, 152, 219, 0.2) !important;
+        border-color: #3498db !important;
+    }
+
+    div.element-container div.stAlert.info div {
+        color: #5dade2 !important;
+        filter: brightness(1.5);
     }
 </style>
 """, unsafe_allow_html=True)
