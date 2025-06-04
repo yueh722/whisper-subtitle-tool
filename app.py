@@ -75,9 +75,13 @@ st.markdown("""
 
     /* 標題文字樣式 */
     .section-title {
-        color: #FFFFFF !important;
+        color: var(--text-color) !important;
         font-size: 1.2em;
         margin: 20px 0 10px 0;
+        display: block !important;
+        text-align: left !important;
+        line-height: 1.4 !important;
+        padding: 2px 0 !important;
     }
 
     /* Checkbox 樣式 */
@@ -133,6 +137,34 @@ st.markdown("""
     }
 
     .stButton > button:not(:disabled):hover {
+        background-color: #357ABD !important;
+        border-color: #357ABD !important;
+        transform: translateY(-2px) !important;
+    }
+
+    /* 下載按鈕特殊樣式 */
+    .stDownloadButton button {
+        width: 100% !important;
+        height: 46px !important;
+        margin: 10px 0 !important;
+        background-color: #4A90E2 !important;
+        color: white !important;
+        border: 1px solid #4A90E2 !important;
+        border-radius: 5px !important;
+        font-size: 16px !important;
+        font-weight: 500 !important;
+        cursor: pointer !important;
+        transition: all 0.3s ease !important;
+    }
+
+    .stDownloadButton button:disabled {
+        background-color: rgba(36, 36, 68, 0.6) !important;
+        color: rgba(255, 255, 255, 0.3) !important;
+        border-color: rgba(74, 144, 226, 0.3) !important;
+        cursor: not-allowed !important;
+    }
+
+    .stDownloadButton button:not(:disabled):hover {
         background-color: #357ABD !important;
         border-color: #357ABD !important;
         transform: translateY(-2px) !important;
@@ -292,33 +324,45 @@ st.markdown("""
     }
 
     .status-message {
-        margin: 0 !important;
-        padding: 15px !important;
-        border-radius: 5px !important;
-        text-align: center !important;
-        color: white !important;
-        font-size: 1.1em !important;
-        width: 100% !important;
-        box-sizing: border-box !important;
+        margin: 10px 0;
+        padding: 15px;
+        border-radius: 5px;
+        text-align: center;
+        font-weight: 500;
+        font-size: 1.1em;
+        letter-spacing: 0.5px;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
     }
 
     .status-info {
-        background-color: rgba(74, 144, 226, 0.2) !important;
+        background-color: rgba(52, 152, 219, 0.2);
+        color: #5dade2;
+        border: 1px solid rgba(52, 152, 219, 0.3);
     }
 
     .status-error {
-        background-color: rgba(231, 76, 60, 0.2) !important;
-        color: #ff6b6b !important;
+        background-color: rgba(231, 76, 60, 0.2);
+        color: #ff7675;
+        border: 1px solid rgba(231, 76, 60, 0.3);
     }
 
     .status-success {
-        background-color: rgba(46, 204, 113, 0.2) !important;
-        color: #2ecc71 !important;
+        background-color: rgba(46, 204, 113, 0.2);
+        color: #7bed9f;
+        border: 1px solid rgba(46, 204, 113, 0.3);
     }
 
-    .status-warning {
-        background-color: rgba(241, 196, 15, 0.2) !important;
-        color: #f1c40f !important;
+    .status-processing {
+        background-color: rgba(241, 196, 15, 0.2);
+        color: #ffeaa7;
+        border: 1px solid rgba(241, 196, 15, 0.3);
+        animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+        0% { opacity: 0.6; }
+        50% { opacity: 1; }
+        100% { opacity: 0.6; }
     }
 
     /* 隱藏 Streamlit 的 spinner */
