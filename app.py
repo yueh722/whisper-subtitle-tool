@@ -13,6 +13,8 @@ from datetime import datetime
 import torch
 import whisper
 
+from utils import process_audio, create_zip_file
+
 # 確保臨時目錄存在
 TEMP_DIR = os.path.join(tempfile.gettempdir(), 'whisper_subtitle_tool')
 os.makedirs(TEMP_DIR, exist_ok=True)
@@ -526,254 +528,94 @@ if 'processing' not in st.session_state:
 if 'downloaded' not in st.session_state:
     st.session_state.downloaded = False
 
-def format_timestamp(seconds, always_include_hours=False):
-    """將秒數轉換為 SRT/VTT 時間戳格式"""
-    assert seconds >= 0, "非負數秒數"
-    milliseconds = round(seconds * 1000.0)
-
-    hours = milliseconds // 3_600_000
-    milliseconds -= hours * 3_600_000
-
-    minutes = milliseconds // 60_000
-    milliseconds -= minutes * 60_000
-
-    seconds = milliseconds // 1_000
-    milliseconds -= seconds * 1_000
-
-    hours_marker = f"{hours:02d}:" if always_include_hours or hours > 0 else ""
-    return f"{hours_marker}{minutes:02d}:{seconds:02d}.{milliseconds:03d}"
-
-def clean_text(text):
-    return text.strip()
-
-def merge_short_segments(segments, min_duration=2.0):
-    merged = []
-    current_text = []
-    current_start = None
-    
-    for segment in segments:
-        if not current_start:
-            current_start = segment['start']
-            current_text.append(segment['text'].strip())
-        else:
-            duration = segment['end'] - current_start
-            if duration < min_duration:
-                current_text.append(segment['text'].strip())
-            else:
-                merged.append({
-                    'start': current_start,
-                    'end': segment['end'],
-                    'text': ' '.join(current_text)
-                })
-                current_start = segment['start']
-                current_text = [segment['text'].strip()]
-    
-    if current_text:
-        merged.append({
-            'start': current_start,
-            'end': segments[-1]['end'],
-            'text': ' '.join(current_text)
-        })
-    
-    return merged
-
-def write_srt(segments):
-    segments = merge_short_segments(segments)
-    output = []
-    for i, segment in enumerate(segments, start=1):
-        output.append(f"{i}")
-        output.append(
-            f"{format_timestamp(segment['start'], always_include_hours=True)} --> "
-            f"{format_timestamp(segment['end'], always_include_hours=True)}"
-        )
-        output.append(clean_text(segment['text']))
-        output.append("")
-    return "\n".join(output)
-
-def write_vtt(segments):
-    segments = merge_short_segments(segments)
-    output = ["WEBVTT", ""]
-    for segment in segments:
-        output.append(
-            f"{format_timestamp(segment['start'])} --> "
-            f"{format_timestamp(segment['end'])}"
-        )
-        output.append(clean_text(segment['text']))
-        output.append("")
-    return "\n".join(output)
-
-def check_ffmpeg():
-    """檢查 ffmpeg 是否可用"""
-    try:
-        subprocess.run(['ffmpeg', '-version'], capture_output=True, check=True)
-        return True
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return False
-
-def process_audio(audio_file, formats):
-    """處理音訊檔案並生成字幕"""
-    temp_audio_path = None
-    try:
-        with st.spinner('正在處理音訊...'):
-            # 生成唯一的臨時文件名
-            temp_file_name = f'temp_audio_{uuid.uuid4()}.mp3'
-            temp_audio_path = os.path.join(TEMP_DIR, temp_file_name)
-            
-            logger.info(f"開始處理音訊文件，臨時文件路徑：{temp_audio_path}")
-            
-            # 寫入臨時文件
-            with open(temp_audio_path, 'wb') as f:
-                f.write(audio_file.getvalue())
-            
-            if st.session_state.model is None:
-                raise Exception("模型未正確載入")
-            
-            # 使用 with torch.inference_mode() 進行推論
-            with torch.inference_mode():
-                try:
-                    result = st.session_state.model.transcribe(
-                        temp_audio_path,
-                        verbose=False,
-                        fp16=False  # 強制使用 FP32
-                    )
-                    logger.info("音訊處理完成")
-                except Exception as e:
-                    logger.error(f"轉錄失敗：{str(e)}")
-                    raise Exception(f"轉錄失敗：{str(e)}")
-            
-            outputs = {}
-            processed_segments = merge_short_segments(result['segments'])
-            
-            for fmt in formats:
-                try:
-                    if fmt == 'txt':
-                        outputs['txt'] = '\n'.join(clean_text(segment['text']) for segment in processed_segments)
-                    elif fmt == 'srt':
-                        outputs['srt'] = write_srt(result['segments'])
-                    elif fmt == 'vtt':
-                        outputs['vtt'] = write_vtt(result['segments'])
-                    elif fmt == 'tsv':
-                        outputs['tsv'] = '開始時間\t結束時間\t文字內容\n' + '\n'.join(
-                            f"{format_timestamp(seg['start'])}\t{format_timestamp(seg['end'])}\t{clean_text(seg['text'])}"
-                            for seg in processed_segments
-                        )
-                    elif fmt == 'json':
-                        clean_result = {
-                            'text': '\n'.join(clean_text(segment['text']) for segment in processed_segments),
-                            'segments': [{
-                                'start': segment['start'],
-                                'end': segment['end'],
-                                'text': clean_text(segment['text'])
-                            } for segment in processed_segments]
-                        }
-                        outputs['json'] = json.dumps(clean_result, ensure_ascii=False, indent=2)
-                    logger.info(f"格式 {fmt} 處理完成")
-                except Exception as e:
-                    logger.error(f"格式 {fmt} 處理失敗：{str(e)}")
-                    continue
-            
-            return outputs
-    except Exception as e:
-        logger.error(f"處理失敗：{str(e)}")
-        raise
-    finally:
-        # 清理臨時文件
-        if temp_audio_path and os.path.exists(temp_audio_path):
-            try:
-                os.remove(temp_audio_path)
-                logger.info("臨時文件已清理")
-            except Exception as e:
-                logger.error(f"清理臨時文件失敗：{str(e)}")
-
-def create_zip_file(outputs, filename_prefix):
-    """將所有輸出打包成ZIP檔案"""
-    memory_file = io.BytesIO()
-    with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
-        for fmt, content in outputs.items():
-            output_filename = f"{filename_prefix}.{fmt}"
-            zf.writestr(output_filename, content)
-    memory_file.seek(0)
-    return memory_file
-
 def main():
-    try:
-        st.title("智能字幕提取系統")
-        
-        # 檔案上傳
-        st.markdown('<div class="section-title">選擇影音檔：</div>', unsafe_allow_html=True)
-        st.markdown('<div class="upload-text">支援多種影音格式，包括 MP3、WAV、MP4、MKV 等</div>', unsafe_allow_html=True)
-        
-        uploaded_file = st.file_uploader(
-            "上傳檔案",
+    st.title("智能字幕提取系統")
+    
+    st.markdown('<div class="section-title">選擇影音檔：</div>', unsafe_allow_html=True)
+    
+    uploaded_file = st.file_uploader(
+            "",
             type=['mp3', 'wav', 'mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm'],
-            help="支援多種影音格式，包括 MP3、WAV、MP4、MKV 等",
+            
             on_change=lambda: setattr(st.session_state, 'downloaded', False)
         )
-        
-        # 格式選擇
-        st.markdown('<div class="section-title">選擇輸出格式：</div>', unsafe_allow_html=True)
-        
-        col1, col2, col3, col4, col5 = st.columns(5)
-        with col1:
-            txt_format = st.checkbox('純文字\n(.txt)', value=True)
-        with col2:
-            srt_format = st.checkbox('字幕檔\n(.srt)', value=True)
-        with col3:
-            vtt_format = st.checkbox('網頁字幕\n(.vtt)', value=True)
-        with col4:
-            tsv_format = st.checkbox('Excel格式\n(.tsv)', value=True)
-        with col5:
-            json_format = st.checkbox('JSON格式\n(.json)', value=True)
-        
-        formats = []
-        if txt_format:
-            formats.append('txt')
-        if srt_format:
-            formats.append('srt')
-        if vtt_format:
-            formats.append('vtt')
-        if tsv_format:
-            formats.append('tsv')
-        if json_format:
-            formats.append('json')
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if st.button('開始提取', disabled=not (uploaded_file and formats) or st.session_state.get('processing', False)):
-                try:
-                    st.session_state.processing = True
-                    st.session_state.downloaded = False
-                    
-                    with st.spinner('正在提取字幕...'):
-                        outputs = process_audio(uploaded_file, formats)
-                        st.session_state.outputs = outputs
-                        st.session_state.filename = os.path.splitext(uploaded_file.name)[0]
-                        st.session_state.processed = True
-                        st.success('處理完成！請點擊右側按鈕下載字幕檔')
-                except Exception as e:
-                    st.error(f'處理失敗：{str(e)}')
-                    logger.error(f"處理失敗：{str(e)}")
-                finally:
-                    st.session_state.processing = False
-        
-        with col2:
-            if st.session_state.get('outputs') and not st.session_state.get('downloaded', False):
-                zip_file = create_zip_file(st.session_state.outputs, st.session_state.filename)
-                if st.download_button(
-                    label='下載字幕檔',
-                    data=zip_file,
-                    file_name=f"{st.session_state.filename}_subtitles.zip",
-                    mime='application/zip'
-                ):
-                    st.session_state.downloaded = True
-                    st.success('下載完成！可以繼續處理新的檔案')
-            else:
-                st.button('下載字幕檔', disabled=True)
+    st.markdown('<div class="section-title">選擇輸出格式：</div>', unsafe_allow_html=True)
+    col1, col2, col3, col4, col5 = st.columns(5)
+    with col1: txt_format = st.checkbox('純文字  \n(.txt)', value=True)
+    with col2: srt_format = st.checkbox('字幕檔  \n(.srt)', value=True)
+    with col3: vtt_format = st.checkbox('網頁字幕\n(.vtt)', value=True)
+    with col4: tsv_format = st.checkbox('Excel格式\n(.tsv)', value=True)
+    with col5: json_format = st.checkbox('JSON格式\n(.json)', value=True)
 
-    except Exception as e:
-        logger.error(f"主程式錯誤：{str(e)}")
-        st.error(f"應用程式發生錯誤：{str(e)}")
+    formats = []
+    if txt_format: formats.append('txt')
+    if srt_format: formats.append('srt')
+    if vtt_format: formats.append('vtt')
+    if tsv_format: formats.append('tsv')
+    if json_format: formats.append('json')
+    
+  
+    col1, col2 = st.columns(2)
+
+    status_area = st.container()
+    status_area.markdown(
+        f'<div class="status-message status-{st.session_state.status_type}">{st.session_state.status_message}</div>',
+        unsafe_allow_html=True
+    )
+
+    with col1:
+        if st.button('開始提取', disabled=not (uploaded_file and formats) or st.session_state.processing):
+            try:
+                st.session_state.processing = True
+                st.session_state.downloaded = False
+                st.session_state.status_message = "字幕提取中..."
+                st.session_state.status_type = "info"
+                
+                with st.spinner('正在提取字幕...'):
+                    outputs = process_audio(uploaded_file, formats)
+                    st.session_state.outputs = outputs
+                    st.session_state.filename = os.path.splitext(uploaded_file.name)[0]
+                    st.session_state.processed = True
+                    st.session_state.status_message = "處理完成！請點擊右側按鈕下載字幕檔"
+                    st.session_state.status_type = "success"
+            except Exception as e:
+                msg = f"處理失敗：{str(e)}"
+                st.session_state.status_message = msg
+                st.session_state.status_type = "error"
+                st.session_state.processed = False
+            finally:
+                st.session_state.processing = False
+               
+
+    with col2:
+        if st.session_state.get('outputs') and not st.session_state.get('downloaded', False):
+            zip_file = create_zip_file(st.session_state.outputs, st.session_state.filename)
+            if st.download_button(
+                label='下載字幕檔',
+                data=zip_file,
+                file_name=f"{st.session_state.filename}_subtitles.zip",
+                mime='application/zip',
+                #use_container_width=True
+            ):
+                st.session_state.downloaded = True
+                st.session_state.status_message = "下載完成！可以繼續處理新的檔案"
+                st.session_state.status_type = "success"
+                st.rerun()
+        else:
+            st.button('下載字幕檔', disabled=True)
+
+   
+  
+
+    # 狀態提示根據狀況自動補上
+    if not uploaded_file:
+        st.session_state.status_message = "請選擇要處理的影音檔案"
+        st.session_state.status_type = "info"
+    elif not formats:
+        st.session_state.status_message = "請至少選擇一種輸出格式"
+        st.session_state.status_type = "warning"
+
+    
 
 if __name__ == '__main__':
     try:
