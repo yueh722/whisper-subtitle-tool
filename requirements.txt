@@ -1,6 +1,7 @@
 # Whisper 與模型相關
 git+https://github.com/openai/whisper.git
-torch==2.1.2
+torch>=2.5.0,<2.8.0
+
 transformers>=4.19.0
 numpy>=1.24.0
 tqdm>=4.65.0
