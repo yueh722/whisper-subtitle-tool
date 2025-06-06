@@ -95,9 +95,9 @@ st.markdown("""
     .stFileUploader [data-testid="stFileUploadDropzone"] > div,
     .stFileUploader [data-testid="stFileUploadDropzone"] p,
     .stFileUploader [data-testid="stFileUploadDropzone"] span {
-        color: #FFFFFF !important;
+        color:rgb(30, 200, 200) !important;
         font-weight: 500 !important;
-        text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3) !important;
+        
     }
 
     /* 上傳區域的拖放區域 */
